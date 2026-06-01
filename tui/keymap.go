@@ -89,13 +89,25 @@ type settingsKeymap struct {
 	Down  key.Binding
 	Left  key.Binding
 	Right key.Binding
+	Enter key.Binding
 	Close key.Binding
 }
 
 func (k settingsKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Close}
+	bindings := []key.Binding{k.Up, k.Down}
+	if k.Left.Keys() != nil {
+		bindings = append(bindings, k.Left)
+	}
+	if k.Right.Keys() != nil {
+		bindings = append(bindings, k.Right)
+	}
+	if k.Enter.Keys() != nil {
+		bindings = append(bindings, k.Enter)
+	}
+	bindings = append(bindings, k.Close)
+	return bindings
 }
 
 func (k settingsKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right, k.Close}}
+	return [][]key.Binding{k.ShortHelp()}
 }

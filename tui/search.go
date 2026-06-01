@@ -92,8 +92,12 @@ func NewSearchModel() *SearchModel {
 	ts.Focused.Placeholder = lipgloss.NewStyle().Foreground(Theme.Faint)
 	ti.SetStyles(ts)
 
+	translationType := config.GetString("translation_type")
+	if translationType == "" {
+		translationType = "sub"
+	}
 	allanimeProvider := allanime.NewAllanimeProvider()
-	allanimeProvider.SetTranslation("sub")
+	allanimeProvider.SetTranslation(translationType)
 
 	h := help.New()
 	hs := help.DefaultStyles(true)
@@ -233,6 +237,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.searchState.TranslationType = "sub"
 				}
+				config.Set("translation_type", m.searchState.TranslationType)
 				return m, nil
 			case key.Matches(msg, m.keymap.Settings):
 				m.prevState = m.state
@@ -409,6 +414,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.searchState.TranslationType = "sub"
 			}
+			config.Set("translation_type", m.searchState.TranslationType)
 
 			if m.state == detailState && m.episodeState.AnimeID != "" {
 				m.episodeState.Loading = true

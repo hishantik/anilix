@@ -671,27 +671,27 @@ func (m *SearchModel) viewSettings() string {
 	)
 
 	// AniList row
+	anilistStyle := unselectedStyle
+	if m.settingsState.Cursor == 2 {
+		anilistStyle = selectedStyle
+	}
 	var anilistPill string
 	if auth.IsLoggedIn() {
 		anilistPill = lipgloss.NewStyle().
-			Background(lipgloss.Color("#16732b")).
+			Background(Theme.Success).
 			Foreground(lipgloss.Color("#ffffff")).
 			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#16732b")).
 			Render("Connected")
 	} else {
 		anilistPill = lipgloss.NewStyle().
-			Background(lipgloss.Color("#c71013")).
+			Background(Theme.Error).
 			Foreground(lipgloss.Color("#ffffff")).
 			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#c71013")).
 			Render("Disconnected")
 	}
 	anilistRow := lipgloss.JoinHorizontal(lipgloss.Center,
 		labelStyle.Render("AniList:"),
-		anilistPill,
+		anilistStyle.Render(anilistPill),
 	)
 
 	// Update row
@@ -702,13 +702,13 @@ func (m *SearchModel) viewSettings() string {
 	var updateVal string
 	switch m.settingsState.UpdateStatus {
 	case "checking":
-		updateVal = "Checking..."
+		updateVal = m.loading.View() + " Checking..."
 	case "available":
 		updateVal = m.settingsState.UpdateVersion + " available"
 	case "up_to_date":
 		updateVal = "Up to date"
 	case "updating":
-		updateVal = "Downloading..."
+		updateVal = m.loading.View() + " Downloading..."
 	case "updated":
 		updateVal = "Restart to apply"
 	case "error":
@@ -726,13 +726,13 @@ func (m *SearchModel) viewSettings() string {
 	boxWidth := innerWidth - 6 // 3 padding each side
 	title := titleStyle.Width(boxWidth).Render("Settings")
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		qualityRow,
+		lipgloss.NewStyle().MarginTop(1).Render(qualityRow),
 		lipgloss.NewStyle().MarginTop(1).Render(aniskipRow),
 		lipgloss.NewStyle().MarginTop(1).Render(anilistRow),
 		lipgloss.NewStyle().MarginTop(1).Render(updateRow),
 	)
 
-	popup := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().MarginTop(1).Render(content))
+	popup := lipgloss.JoinVertical(lipgloss.Center, title, content)
 	popupBox := gradientPopupBox(popup, popupWidth, 3)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupBox)
@@ -833,9 +833,13 @@ func (m *SearchModel) renderChrome(content string) string {
 		sHelp := settingsKeymap{
 			Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("\u2191/k", "up")),
 			Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("\u2193/j", "down")),
-			Left:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("\u2190/h", "decrease")),
-			Right: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("\u2192/l", "increase")),
 			Close: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+		}
+		if m.settingsState.Cursor <= 1 {
+			sHelp.Left = key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("\u2190/h", "decrease"))
+			sHelp.Right = key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("\u2192/l", "increase"))
+		} else {
+			sHelp.Enter = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select"))
 		}
 		helpView = m.help.View(sHelp)
 		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)

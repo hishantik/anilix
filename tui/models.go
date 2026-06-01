@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -98,7 +99,13 @@ func NewSearchState() *SearchState {
 		Metadata:        nil,
 		Loading:         false,
 		Err:             nil,
-		TranslationType: "sub",
+		TranslationType: func() string {
+			t := config.GetString("translation_type")
+			if t == "" {
+				return "sub"
+			}
+			return t
+		}(),
 	}
 }
 
