@@ -83,7 +83,10 @@ type EpisodeMetadataPanel struct {
 type SettingsState struct {
 	Quality        string // "1080p", "720p", "480p", "360p", "auto"
 	AniskipEnabled bool
-	Cursor         int // 0 = quality, 1 = aniskip
+	Cursor         int    // 0 = quality, 1 = aniskip, 2 = anilist, 3 = update
+	UpdateStatus   string // "", "checking", "updated", "error"
+	UpdateVersion  string // latest version tag, e.g. "v1.7.0"
+	UpdateError    error
 }
 
 // NewSearchState creates a new search state

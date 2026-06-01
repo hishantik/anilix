@@ -86,3 +86,14 @@ type TrackingStatusLoadedMsg struct {
 type AniListLoginMsg struct {
 	Err error
 }
+
+// UpdateCheckMsg is sent after checking GitHub for the latest release.
+type UpdateCheckMsg struct {
+	LatestVersion string
+	Err           error
+}
+
+// UpdateCompleteMsg is sent after downloading and installing the update.
+type UpdateCompleteMsg struct {
+	Err error
+}

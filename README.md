@@ -38,6 +38,7 @@
 | **Recent Searches** — Persists your last 10 searches for quick access | **Multi-host Extraction** — Extracts direct streams from multiple hosts with automatic fallback |
 | **Android Proxy** — Local HTTP proxy bridges Android apps and PRoot/Termux for seamless stream playback on mobile | **Persistent Caching** — SQLite-backed ID mapping for fast repeated lookups |
 | **AniList Tracking** — OAuth2 login to sync watch progress and status with your AniList account, connect/disconnect from the TUI settings menu | **Cover Art** — Renders anime cover images directly in the terminal using Kitty graphics or half-block Unicode placeholders |
+| **Self-Update** — Check for and install updates directly from the TUI settings menu (`Ctrl+S` → Update) without leaving the app | |
 
 </div>
 
@@ -214,6 +215,15 @@ anilix anilist logout   # Logout from AniList
 ```
 
 </div>
+
+<h3 align="center">Updating</h3>
+
+<p align="center">
+  You can update Anilix directly from the TUI settings menu:<br/>
+  Open settings with <code>Ctrl+S</code>, navigate to the <b>Update</b> row, and press <code>Enter</code>.<br/>
+  The app checks GitHub for the latest release and, if available, downloads and replaces the binary automatically.<br/>
+  Restart Anilix after the update to apply changes.
+</p>
 
 ---
 

@@ -16,6 +16,7 @@ import (
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/update"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -686,6 +687,38 @@ func doAniListLogout() tea.Cmd {
 		defer func() { auth.Quiet = false }()
 		err := auth.Logout()
 		return AniListLoginMsg{Err: err}
+	}
+}
+
+// checkForUpdateCmd checks GitHub for the latest release and returns the version.
+func checkForUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		release, err := update.CheckForUpdate(ctx)
+		if err != nil {
+			return UpdateCheckMsg{Err: err}
+		}
+		return UpdateCheckMsg{LatestVersion: release.TagName}
+	}
+}
+
+// doSelfUpdateCmd downloads and installs the latest release.
+func doSelfUpdateCmd(latestVersion string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		release, err := update.CheckForUpdate(ctx)
+		if err != nil {
+			return UpdateCompleteMsg{Err: fmt.Errorf("failed to fetch release: %w", err)}
+		}
+
+		if err := update.PerformUpdate(ctx, release); err != nil {
+			return UpdateCompleteMsg{Err: err}
+		}
+		return UpdateCompleteMsg{}
 	}
 }
 

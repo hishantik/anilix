@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hishantik/anilix/auth"
+	"github.com/hishantik/anilix/version"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -693,6 +694,33 @@ func (m *SearchModel) viewSettings() string {
 		anilistPill,
 	)
 
+	// Update row
+	updateStyle := unselectedStyle
+	if m.settingsState.Cursor == 3 {
+		updateStyle = selectedStyle
+	}
+	var updateVal string
+	switch m.settingsState.UpdateStatus {
+	case "checking":
+		updateVal = "Checking..."
+	case "available":
+		updateVal = m.settingsState.UpdateVersion + " available"
+	case "up_to_date":
+		updateVal = "Up to date"
+	case "updating":
+		updateVal = "Downloading..."
+	case "updated":
+		updateVal = "Restart to apply"
+	case "error":
+		updateVal = "Error"
+	default:
+		updateVal = version.Version
+	}
+	updateRow := lipgloss.JoinHorizontal(lipgloss.Center,
+		labelStyle.Render("Update:"),
+		updateStyle.Render(updateVal),
+	)
+
 	popupWidth := 44
 	innerWidth := popupWidth - 2
 	boxWidth := innerWidth - 6 // 3 padding each side
@@ -701,6 +729,7 @@ func (m *SearchModel) viewSettings() string {
 		qualityRow,
 		lipgloss.NewStyle().MarginTop(1).Render(aniskipRow),
 		lipgloss.NewStyle().MarginTop(1).Render(anilistRow),
+		lipgloss.NewStyle().MarginTop(1).Render(updateRow),
 	)
 
 	popup := lipgloss.JoinVertical(lipgloss.Center, title, lipgloss.NewStyle().MarginTop(1).Render(content))

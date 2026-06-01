@@ -13,6 +13,8 @@ import (
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/update"
+	"github.com/hishantik/anilix/version"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -278,7 +280,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsState.Cursor--
 				}
 			case "down", "j":
-				if m.settingsState.Cursor < 2 {
+				if m.settingsState.Cursor < 3 {
 					m.settingsState.Cursor++
 				}
 			case "left", "h", "right", "l":
@@ -318,6 +320,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Start OAuth login flow
 						m.state = anilistLoginState
 						return m, doAniListLogin()
+					}
+				} else if m.settingsState.Cursor == 3 {
+					if m.settingsState.UpdateStatus == "" || m.settingsState.UpdateStatus == "error" {
+						m.settingsState.UpdateStatus = "checking"
+						m.settingsState.UpdateError = nil
+						return m, checkForUpdateCmd()
+					} else if m.settingsState.UpdateStatus == "available" {
+						m.settingsState.UpdateStatus = "updating"
+						m.settingsState.UpdateError = nil
+						return m, doSelfUpdateCmd(m.settingsState.UpdateVersion)
 					}
 				}
 			case "esc":
@@ -721,6 +733,25 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.anilistToken = config.GetString("anilist.token")
 			m.anilistUsername = auth.GetUsername()
 			m.trackingEnabled = m.anilistToken != ""
+		}
+
+	case UpdateCheckMsg:
+		if msg.Err != nil {
+			m.settingsState.UpdateStatus = "error"
+			m.settingsState.UpdateError = msg.Err
+		} else if update.IsUpdateAvailable(version.Version, msg.LatestVersion) {
+			m.settingsState.UpdateStatus = "available"
+			m.settingsState.UpdateVersion = msg.LatestVersion
+		} else {
+			m.settingsState.UpdateStatus = "up_to_date"
+		}
+
+	case UpdateCompleteMsg:
+		if msg.Err != nil {
+			m.settingsState.UpdateStatus = "error"
+			m.settingsState.UpdateError = msg.Err
+		} else {
+			m.settingsState.UpdateStatus = "updated"
 		}
 
 	case TUIErrorMsg:
