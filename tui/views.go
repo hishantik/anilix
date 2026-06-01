@@ -126,13 +126,9 @@ func (m *SearchModel) renderMetadataPreview(width int, termHeight int) string {
 
 	var sections []string
 
-	// Cover image — fill most of the available height
+	// Cover image — compact allocation so metadata sits close below
 	if meta.CoverImage != "" {
-		maxCoverRows := (termHeight - 4) * 3 / 4
-		if maxCoverRows < 8 {
-			maxCoverRows = 8
-		}
-		cover := truncateToRows(meta.CoverImage, maxCoverRows)
+		cover := truncateToRows(meta.CoverImage, coverMaxRows(termHeight))
 		sections = append(sections, cover)
 	}
 
@@ -296,16 +292,26 @@ func truncateToRows(s string, n int) string {
 	return strings.Join(lines[:n], "\n")
 }
 
+// coverMaxRows computes the maximum terminal rows for a cover image.
+// Shared between view rendering and download commands to prevent
+// Kitty image/placeholder height mismatches.
+func coverMaxRows(termHeight int) int {
+	n := (termHeight - 4) / 2
+	if n < 8 {
+		n = 8
+	}
+	if n > 24 {
+		n = 24
+	}
+	return n
+}
+
 func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int, termHeight int) string {
 	var sections []string
 
-	// Cover image or placeholder — fill most of the available height
-	maxCoverRows := (termHeight - 4) * 3 / 4
-	if maxCoverRows < 8 {
-		maxCoverRows = 8
-	}
+	// Cover image or placeholder — compact allocation so metadata sits close below
 	if meta.CoverImage != "" {
-		cover := truncateToRows(meta.CoverImage, maxCoverRows)
+		cover := truncateToRows(meta.CoverImage, coverMaxRows(termHeight))
 		sections = append(sections, cover)
 	} else {
 		sections = append(sections, coverPlaceholder(meta.Title, width))

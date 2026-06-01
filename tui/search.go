@@ -505,7 +505,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Trigger cover download if not already loaded
 					if meta.Cover != "" && meta.CoverImage == "" {
 						leftW, _, _, _ := detailLayout(m.width, m.height)
-						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index(), (m.height-4)*3/4))
+						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index(), coverMaxRows(m.height)))
 					}
 				} else {
 					// Not cached (AniList batch may not have covered this one) — fetch individually
@@ -612,7 +612,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Trigger cover image download for the selected item
 			if meta.Cover != "" && meta.CoverImage == "" {
 				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected, (m.height-4)*3/4))
+				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected, coverMaxRows(m.height)))
 			}
 		}
 
@@ -625,7 +625,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Trigger cover download if not already loaded
 				if meta.Cover != "" && meta.CoverImage == "" {
 					leftW, _, _, _ := detailLayout(m.width, m.height)
-					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index, (m.height-4)*3/4))
+					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index, coverMaxRows(m.height)))
 				}
 			}
 			// If not in cache, batch already failed or ID wasn't available
@@ -640,7 +640,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Trigger cover image download
 			if msg.Metadata != nil && msg.Metadata.Cover != "" && msg.Metadata.CoverImage == "" {
 				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index, (m.height-4)*3/4))
+				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index, coverMaxRows(m.height)))
 			}
 		}
 
