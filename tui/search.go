@@ -526,6 +526,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.episodeState.Loading = true
 						m.progressPercent = 0
 						m.progressTarget = 0.4
+						// Compute resume episode from history (AniList progress overrides later)
+						m.computeResumeEpisode()
+						m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
 						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
 						cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
 						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
@@ -775,6 +778,20 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TrackingStatusLoadedMsg:
 		m.episodeState.TrackingStatus = msg.Status
 		m.episodeState.TrackingProgress = msg.Progress
+		// Override resume episode with AniList progress (next unwatched)
+		if msg.Progress > 0 {
+			m.episodeState.ResumeEpisode = msg.Progress + 1
+		} else {
+			m.episodeState.ResumeEpisode = 1
+		}
+		m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
+		// Cap at total episodes — if all watched, hide resume card
+		if m.searchState.Metadata != nil && m.searchState.Metadata.Episodes > 0 {
+			if m.episodeState.ResumeEpisode > m.searchState.Metadata.Episodes {
+				m.episodeState.ResumeEpisode = 0
+				m.episodeState.ResumeFocus = false
+			}
+		}
 		if len(m.episodeState.Episodes) > 0 {
 			m.updateEpisodeList()
 		}
@@ -785,6 +802,20 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.episodeState.TrackingStatus = msg.Status
 			m.episodeState.TrackingProgress = msg.Progress
+			// Override resume episode with AniList progress (next unwatched)
+			if msg.Progress > 0 {
+				m.episodeState.ResumeEpisode = msg.Progress + 1
+			} else {
+				m.episodeState.ResumeEpisode = 1
+			}
+			m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
+			// Cap at total episodes — if all watched, hide resume card
+			if m.searchState.Metadata != nil && m.searchState.Metadata.Episodes > 0 {
+				if m.episodeState.ResumeEpisode > m.searchState.Metadata.Episodes {
+					m.episodeState.ResumeEpisode = 0
+					m.episodeState.ResumeFocus = false
+				}
+			}
 			if len(m.episodeState.Episodes) > 0 {
 				m.updateEpisodeList()
 			}
@@ -1052,6 +1083,33 @@ func (m *SearchModel) filterEpisodesByNumber(query string) {
 	if len(items) > 0 {
 		m.episodeList.Select(0)
 	}
+}
+
+// computeResumeEpisode sets ResumeEpisode from local history.
+// AniList progress overrides this when TrackingStatusLoadedMsg arrives.
+func (m *SearchModel) computeResumeEpisode() {
+	m.episodeState.ResumeEpisode = 0
+	if m.hist == nil {
+		return
+	}
+	anime := m.searchState.Results[m.searchState.Selected]
+	if anime == nil {
+		return
+	}
+	entries := m.hist.RecentUnique(50)
+	for _, e := range entries {
+		if e.MALID == anime.MALID {
+			epNum, _ := strconv.Atoi(e.Episode)
+			if epNum > 0 {
+				m.episodeState.ResumeEpisode = epNum + 1
+			} else {
+				m.episodeState.ResumeEpisode = 1
+			}
+			return
+		}
+	}
+	// No history: start from episode 1
+	m.episodeState.ResumeEpisode = 1
 }
 
 func (m *SearchModel) selectEpisodeByNumber(query string) {
