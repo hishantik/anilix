@@ -11,6 +11,7 @@ type keymap struct {
 	Toggle     key.Binding
 	Search     key.Binding
 	Settings   key.Binding
+	Resume     key.Binding
 	ConfirmYes key.Binding
 	ConfirmNo  key.Binding
 }
@@ -49,6 +50,10 @@ func newKeymap() keymap {
 			key.WithKeys("ctrl+s"),
 			key.WithHelp("ctrl+s", "settings"),
 		),
+		Resume: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "resume watching"),
+		),
 		ConfirmYes: key.NewBinding(
 			key.WithKeys("y", "enter"),
 			key.WithHelp("y/enter", "yes"),
@@ -61,7 +66,7 @@ func newKeymap() keymap {
 }
 
 func (k keymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Select, k.Settings, k.Back, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Select, k.Settings, k.Resume, k.Back, k.Quit}
 }
 
 func (k keymap) FullHelp() [][]key.Binding {
