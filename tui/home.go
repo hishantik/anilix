@@ -31,6 +31,8 @@ type HomeItem struct {
 	EpisodeCount int
 	Episode      string // last watched episode (for Continue Watching)
 	Source       string // "history", "trending", "popular", or genre name
+	Status       string // "FINISHED", "RELEASING", etc.
+	Synopsis     string // short description
 }
 
 // HomeSection represents a row of anime on the home screen.
@@ -72,6 +74,29 @@ func NewHomeState() *HomeState {
 	}
 }
 
+// homeLayout computes the two-column layout for the home screen.
+// Returns gridW for the card sections, detailsW for the info panel, and isNarrow.
+func homeLayout(totalWidth int) (gridW, detailsW int, isNarrow bool) {
+	if totalWidth < 80 {
+		return totalWidth, 0, true
+	}
+
+	detailsW = totalWidth / 3
+	if detailsW < 30 {
+		detailsW = 30
+	}
+	if detailsW > 45 {
+		detailsW = 45
+	}
+
+	gridW = totalWidth - detailsW - 2 // 2 for gap
+	if gridW < 40 {
+		gridW = 40
+	}
+
+	return gridW, detailsW, false
+}
+
 // viewHomeState renders the home screen.
 func (m *SearchModel) viewHomeState() string {
 	if m.homeScreen == nil {
@@ -79,7 +104,7 @@ func (m *SearchModel) viewHomeState() string {
 	}
 
 	hs := m.homeScreen
-	var lines []string
+	gridW, detailsW, isNarrow := homeLayout(m.width)
 
 	// Calculate available space (chrome uses ~4 lines: title + blank + help)
 	availHeight := m.height - 6
@@ -87,17 +112,18 @@ func (m *SearchModel) viewHomeState() string {
 		availHeight = 4
 	}
 
-	// Calculate card dimensions
+	// Calculate card dimensions within grid width
 	cardWidth := 26
-	cardsPerRow := (m.width - 4) / cardWidth
+	cardsPerRow := (gridW - 4) / cardWidth
 	if cardsPerRow < 1 {
 		cardsPerRow = 1
 	}
 	if cardsPerRow > 6 {
 		cardsPerRow = 6
 	}
-	cardWidth = (m.width - 4) / cardsPerRow
+	cardWidth = (gridW - 4) / cardsPerRow
 
+	var gridLines []string
 	linesUsed := 0
 
 	for si, section := range hs.Sections {
@@ -123,42 +149,141 @@ func (m *SearchModel) viewHomeState() string {
 				lipgloss.NewStyle().Foreground(Theme.Faint).Render(section.Title) +
 				lipgloss.NewStyle().Foreground(Theme.Border).Render(" \u2500\u2500")
 		}
-		lines = append(lines, header)
+		gridLines = append(gridLines, header)
 		linesUsed++
 
 		// Section content
 		if section.Loading {
 			loadingMsg := m.loading.View() + " Loading..."
-			lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("   "+loadingMsg))
+			gridLines = append(gridLines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("   "+loadingMsg))
 			linesUsed++
 		} else if section.Err != nil {
-			lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("   Failed to load"))
+			gridLines = append(gridLines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("   Failed to load"))
 			linesUsed++
 		} else if len(section.Items) == 0 {
 			emptyMsg := "   No items"
 			if section.Title == "Continue Watching" {
 				emptyMsg = "   No watch history yet"
 			}
-			lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(emptyMsg))
+			gridLines = append(gridLines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(emptyMsg))
 			linesUsed++
 		} else if section.Title == "Continue Watching" {
 			// Continue Watching uses special cards with episode + progress
 			cardLine := m.renderContinueCardRow(section, isActive, cardWidth, cardsPerRow)
-			lines = append(lines, cardLine)
+			gridLines = append(gridLines, cardLine)
 			linesUsed++
 		} else {
 			// Render cards as a horizontal row
 			cardLine := m.renderHomeCardRow(section, isActive, cardWidth, cardsPerRow)
-			lines = append(lines, cardLine)
+			gridLines = append(gridLines, cardLine)
 			linesUsed++
 		}
 
 		// Blank separator between sections
-		lines = append(lines, "")
+		gridLines = append(gridLines, "")
 		linesUsed++
 	}
 
-	return strings.Join(lines, "\n")
+	gridContent := strings.Join(gridLines, "\n")
+
+	if isNarrow {
+		return gridContent
+	}
+
+	// Wide layout: grid on left, details panel on right
+	detailsPanel := m.renderHomeDetailsPanel(detailsW)
+	leftPanel := lipgloss.NewStyle().Width(gridW).MaxWidth(gridW).Render(gridContent)
+	gap := strings.Repeat(" ", 2)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, gap, detailsPanel)
+}
+
+// renderHomeDetailsPanel renders the right-side details panel for the home screen.
+func (m *SearchModel) renderHomeDetailsPanel(width int) string {
+	hs := m.homeScreen
+	sec := hs.Sections[hs.ActiveSection]
+
+	// No items selected
+	if len(sec.Items) == 0 || sec.Selected >= len(sec.Items) {
+		empty := lipgloss.NewStyle().Foreground(Theme.Faint).Width(width - 4).Render("Select an anime to see details")
+		return gradientPopupBox(empty, width, 3)
+	}
+
+	item := sec.Items[sec.Selected]
+	var lines []string
+
+	// Title
+	titleStyle := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Width(width - 4)
+	lines = append(lines, titleStyle.Render(trimAnimeName(item.Name, width-4)))
+
+	// Rating line
+	if item.Score > 0 {
+		rating := lipgloss.NewStyle().Foreground(Theme.Warning).Render(fmt.Sprintf("\u2605 %.1f", item.Score))
+		lines = append(lines, rating)
+	}
+
+	// Gradient separator
+	lines = append(lines, "")
+	lines = append(lines, gradientLine(width))
+
+	// Info block
+	var info []string
+	if item.Type != "" {
+		info = append(info, infoBlock("Type", item.Type))
+	}
+	if item.EpisodeCount > 0 {
+		info = append(info, infoBlock("Episodes", fmt.Sprintf("%d", item.EpisodeCount)))
+	}
+	if item.Status != "" {
+		info = append(info, infoBlock("Status", formatStatus(item.Status)))
+	}
+	if item.Year > 0 {
+		info = append(info, infoBlock("Year", fmt.Sprintf("%d", item.Year)))
+	}
+	if len(info) > 0 {
+		lines = append(lines, strings.Join(info, "\n"))
+	}
+
+	// Genre tags
+	if len(item.Genres) > 0 {
+		lines = append(lines, "")
+		var tagLines []string
+		var currentLine string
+		for _, g := range item.Genres {
+			tag := genreTag(g)
+			candidate := currentLine
+			if candidate != "" {
+				candidate += " "
+			}
+			candidate += tag
+			if lipgloss.Width(candidate) > width-4 && currentLine != "" {
+				tagLines = append(tagLines, currentLine)
+				currentLine = tag
+			} else {
+				currentLine = candidate
+			}
+		}
+		if currentLine != "" {
+			tagLines = append(tagLines, currentLine)
+		}
+		lines = append(lines, strings.Join(tagLines, "\n"))
+	}
+
+	// Synopsis
+	if item.Synopsis != "" {
+		lines = append(lines, "")
+		lines = append(lines, gradientLine(width))
+		lines = append(lines, "")
+		synopsis := stripHTML(item.Synopsis)
+		maxLen := width * 4
+		if maxLen > 0 {
+			synopsis = truncateSynopsis(synopsis, maxLen)
+		}
+		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Text).Width(width-4).Render(synopsis))
+	}
+
+	content := strings.Join(lines, "\n")
+	return gradientPopupBox(content, width, 1)
 }
 
 // renderContinueCardRow renders a horizontal row of Continue Watching cards.

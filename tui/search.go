@@ -392,6 +392,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Home screen navigation
 		if m.state == homeState {
+			prevSection := m.homeScreen.ActiveSection
+			prevSelected := m.homeScreen.Sections[prevSection].Selected
+
 			switch msg.String() {
 			case "up", "k":
 				if m.homeScreen.ActiveSection > 0 {
@@ -428,6 +431,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmSelect = 1
 				m.state = confirmQuitState
 				return m, nil
+			}
+
+			// If selection changed, fetch details for the new item if needed
+			newSection := m.homeScreen.ActiveSection
+			newSelected := m.homeScreen.Sections[newSection].Selected
+			if (newSection != prevSection || newSelected != prevSelected) &&
+				len(m.homeScreen.Sections[newSection].Items) > newSelected {
+				item := m.homeScreen.Sections[newSection].Items[newSelected]
+				if item.Synopsis == "" && item.AniListID > 0 {
+					return m, fetchHomeItemDetailsCmd(newSection, newSelected, item, m.anilistClient)
+				}
 			}
 			return m, nil
 		}
@@ -855,6 +869,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case HomeDetailsLoadedMsg:
+		if msg.SectionIndex < len(m.homeScreen.Sections) {
+			sec := m.homeScreen.Sections[msg.SectionIndex]
+			if msg.ItemIndex < len(sec.Items) {
+				sec.Items[msg.ItemIndex].Status = msg.Status
+				sec.Items[msg.ItemIndex].Synopsis = msg.Synopsis
+			}
+		}
 	case HomeItemResolvedMsg:
 		anime := msg.Anime
 		m.searchState.Results = []*source.Anime{anime}

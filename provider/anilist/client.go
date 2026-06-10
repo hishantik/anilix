@@ -230,6 +230,7 @@ func (c *Client) GetTrendingAnime(ctx context.Context, limit int) ([]MediaData, 
 				title { romaji english native userPreferred }
 				coverImage { extraLarge large medium }
 				type format status
+				description(asHtml: false)
 				startDate { year }
 				seasonYear
 				episodes genres
@@ -263,6 +264,7 @@ func (c *Client) GetAnimeByGenre(ctx context.Context, genre string, limit int) (
 				title { romaji english native userPreferred }
 				coverImage { extraLarge large medium }
 				type format status
+				description(asHtml: false)
 				startDate { year }
 				seasonYear
 				episodes genres
