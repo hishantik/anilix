@@ -67,6 +67,8 @@ type EpisodeState struct {
 	Playing           bool
 	TrackingStatus    string // "CURRENT", "COMPLETED", etc.
 	TrackingProgress  int
+	ResumeEpisode     int  // episode number to resume (0 = no resume data)
+	ResumeFocus       bool // whether the resume card has keyboard focus
 }
 
 // EpisodeMetadataPanel holds metadata for a single episode
