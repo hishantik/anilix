@@ -14,6 +14,7 @@ const (
 	confirmQuitState
 	settingsState
 	anilistLoginState
+	homeState
 )
 
 // SelectionResult holds the selected anime and episode

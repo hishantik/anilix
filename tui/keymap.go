@@ -111,3 +111,59 @@ func (k settingsKeymap) ShortHelp() []key.Binding {
 func (k settingsKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{k.ShortHelp()}
 }
+
+type homeKeymap struct {
+	Up       key.Binding
+	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
+	Select   key.Binding
+	Search   key.Binding
+	Settings key.Binding
+	Quit     key.Binding
+}
+
+func newHomeKeymap() homeKeymap {
+	return homeKeymap{
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "section"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "section"),
+		),
+		Left: key.NewBinding(
+			key.WithKeys("left", "h"),
+			key.WithHelp("←/h", "left"),
+		),
+		Right: key.NewBinding(
+			key.WithKeys("right", "l"),
+			key.WithHelp("→/l", "right"),
+		),
+		Select: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select"),
+		),
+		Search: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "search"),
+		),
+		Settings: key.NewBinding(
+			key.WithKeys("ctrl+s"),
+			key.WithHelp("ctrl+s", "settings"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("ctrl+c"),
+			key.WithHelp("ctrl+c", "quit"),
+		),
+	}
+}
+
+func (k homeKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Select, k.Search, k.Settings, k.Quit}
+}
+
+func (k homeKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{k.ShortHelp()}
+}

@@ -20,6 +20,8 @@ func (m *SearchModel) View() tea.View {
 	var content string
 
 	switch m.state {
+	case homeState:
+		content = m.viewHomeState()
 	case searchState:
 		content = m.viewSearchState()
 	case detailState:
@@ -826,12 +828,16 @@ func (m *SearchModel) renderChrome(content string) string {
 		chromeLines += 2 // back + blank
 	}
 
-	// Help bar — only for states without a list (confirm quit, settings)
+	// Help bar — only for states without a list (confirm quit, settings, home)
 	// searchState/detailState use the list's built-in help bar
 	var helpView string
 	var helpBox string
 	helpHeight := 0
-	if m.state == confirmQuitState {
+	if m.state == homeState {
+		helpView = m.help.View(newHomeKeymap())
+		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)
+		helpHeight = 1
+	} else if m.state == confirmQuitState {
 		helpView = m.help.View(confirmKeymap{m.keymap.ConfirmYes, m.keymap.ConfirmNo})
 		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)
 		helpHeight = 1

@@ -219,6 +219,131 @@ func (c *Client) GetAnimeBatch(ctx context.Context, ids []int) (map[int]*MediaDa
 	return results, nil
 }
 
+// GetTrendingAnime fetches currently trending anime from AniList
+func (c *Client) GetTrendingAnime(ctx context.Context, limit int) ([]MediaData, error) {
+	c.rateLimiter.waitForToken()
+
+	gql := `query ($perPage: Int, $type: MediaType, $sort: [MediaSort]) {
+		Page(page: 1, perPage: $perPage) {
+			media(type: $type, sort: $sort, countryOfOrigin: JP) {
+				id
+				title { romaji english native userPreferred }
+				coverImage { extraLarge large medium }
+				type format status
+				startDate { year }
+				seasonYear
+				episodes genres
+				averageScore popularity trending
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"perPage": limit,
+		"type":    "ANIME",
+		"sort":    []string{"TRENDING_DESC"},
+	}
+
+	resp, err := c.doGraphQL(ctx, gql, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseMediaPage(resp)
+}
+
+// GetAnimeByGenre fetches popular anime filtered by genre from AniList
+func (c *Client) GetAnimeByGenre(ctx context.Context, genre string, limit int) ([]MediaData, error) {
+	c.rateLimiter.waitForToken()
+
+	gql := `query ($genre: String, $perPage: Int) {
+		Page(page: 1, perPage: $perPage) {
+			media(type: ANIME, genre: $genre, sort: [POPULARITY_DESC], countryOfOrigin: JP) {
+				id
+				title { romaji english native userPreferred }
+				coverImage { extraLarge large medium }
+				type format status
+				startDate { year }
+				seasonYear
+				episodes genres
+				averageScore popularity
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"genre":   genre,
+		"perPage": limit,
+	}
+
+	resp, err := c.doGraphQL(ctx, gql, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseMediaPage(resp)
+}
+
+// GetPopularAnime fetches most popular anime from AniList
+func (c *Client) GetPopularAnime(ctx context.Context, limit int) ([]MediaData, error) {
+	c.rateLimiter.waitForToken()
+
+	gql := `query ($perPage: Int) {
+		Page(page: 1, perPage: $perPage) {
+			media(type: ANIME, sort: [POPULARITY_DESC], countryOfOrigin: JP) {
+				id
+				title { romaji english native userPreferred }
+				coverImage { extraLarge large medium }
+				type format status
+				startDate { year }
+				seasonYear
+				episodes genres
+				averageScore popularity
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"perPage": limit,
+	}
+
+	resp, err := c.doGraphQL(ctx, gql, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseMediaPage(resp)
+}
+
+// parseMediaPage extracts MediaData from a paginated GraphQL response
+func (c *Client) parseMediaPage(resp []byte) ([]MediaData, error) {
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(resp, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	page, ok := rawResp["Page"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no Page in response")
+	}
+
+	mediaList, ok := page["media"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no media in response")
+	}
+
+	var results []MediaData
+	for _, m := range mediaList {
+		dataBytes, _ := json.Marshal(m)
+		var media MediaData
+		if err := json.Unmarshal(dataBytes, &media); err == nil && media.ID != 0 {
+			results = append(results, media)
+		}
+	}
+
+	return results, nil
+}
+
 func (c *Client) doGraphQL(ctx context.Context, query string, variables map[string]interface{}) ([]byte, error) {
 	reqBody, err := json.Marshal(GraphQLRequest{
 		Query:     query,

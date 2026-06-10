@@ -164,6 +164,59 @@ func (c *JikanClient) GetEpisodes(ctx context.Context, malID int) ([]Episode, er
 	return result.Data, nil
 }
 
+// GetTopAnime fetches top/popular anime from Jikan
+func (c *JikanClient) GetTopAnime(ctx context.Context, filter string, limit int) ([]AnimeData, error) {
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/top/anime?filter=%s&limit=%d", c.baseURL, filter, limit)
+
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("curl failed: %w", err)
+	}
+
+	var result AnimeResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+// GenresResponse represents the Jikan API genres response
+type GenresResponse struct {
+	Data []Genre `json:"data"`
+}
+
+// GetAnimeGenres fetches the list of anime genres from Jikan
+func (c *JikanClient) GetAnimeGenres(ctx context.Context) ([]Genre, error) {
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/genres/anime", c.baseURL)
+
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("curl failed: %w", err)
+	}
+
+	var result GenresResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
 // GetEpisode fetches a single episode by MAL ID and episode number
 func (c *JikanClient) GetEpisode(ctx context.Context, malID int, episodeNumber int) (*Episode, error) {
 	c.rateLimiter.waitForToken()

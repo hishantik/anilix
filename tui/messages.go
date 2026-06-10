@@ -97,3 +97,29 @@ type UpdateCheckMsg struct {
 type UpdateCompleteMsg struct {
 	Err error
 }
+
+// Home screen messages
+
+type HomeHistoryLoadedMsg struct {
+	Items []HomeItem
+}
+
+type HomeTrendingLoadedMsg struct {
+	Items []HomeItem
+	Err   error
+}
+
+type HomePopularLoadedMsg struct {
+	Items []HomeItem
+	Err   error
+}
+
+type HomeGenreLoadedMsg struct {
+	Genre string
+	Items []HomeItem
+	Err   error
+}
+
+type HomeItemResolvedMsg struct {
+	Anime *source.Anime
+}

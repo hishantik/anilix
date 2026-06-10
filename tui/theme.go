@@ -63,39 +63,48 @@ func gradientLine(width int) string {
 	return result.String()
 }
 
-// gradientRoundedBorder returns a RoundedBorder with gradient foreground.
-// Since lipgloss doesn't support per-character border coloring natively,
-// we render the border manually using gradient-colored box-drawing chars.
+// gradientPopupBox returns a gradient-bordered box using box-drawing chars.
+// Both focused and unfocused cards MUST call this (with different borderColors)
+// so geometry is always identical.
 func gradientPopupBox(content string, width, paddingH int) string {
 	innerWidth := width - 2 // subtract left + right border
 	if innerWidth < 10 {
 		innerWidth = 10
 	}
+	return cardBox(content, width, paddingH, Theme.Gradient)
+}
 
-	// Build gradient colors for the full width
-	borderColors := lipgloss.Blend1D(innerWidth+2, Theme.Gradient...)
+// cardBox renders a rounded-border box with exact outer width = width.
+// borderColors is the palette used for top/bottom gradient and side colors.
+// Every call produces the same outer dimensions regardless of content.
+func cardBox(content string, width, paddingH int, borderColors []color.Color) string {
+	innerWidth := width - 2
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	// Build per-cell gradient for top/bottom bars
+	cells := lipgloss.Blend1D(innerWidth+2, borderColors...)
 
 	// Top border: ╭ ─ ╮
 	var top strings.Builder
-	top.WriteString(lipgloss.NewStyle().Foreground(borderColors[0]).Render("\u256d"))
+	top.WriteString(lipgloss.NewStyle().Foreground(cells[0]).Render("\u256d"))
 	for i := 1; i <= innerWidth; i++ {
-		top.WriteString(lipgloss.NewStyle().Foreground(borderColors[i]).Render("\u2500"))
+		top.WriteString(lipgloss.NewStyle().Foreground(cells[i]).Render("\u2500"))
 	}
-	top.WriteString(lipgloss.NewStyle().Foreground(borderColors[innerWidth+1]).Render("\u256e"))
+	top.WriteString(lipgloss.NewStyle().Foreground(cells[innerWidth+1]).Render("\u256e"))
 
 	// Bottom border: ╰ ─ ╯
 	var bottom strings.Builder
-	bottom.WriteString(lipgloss.NewStyle().Foreground(borderColors[0]).Render("\u2570"))
+	bottom.WriteString(lipgloss.NewStyle().Foreground(cells[0]).Render("\u2570"))
 	for i := 1; i <= innerWidth; i++ {
-		bottom.WriteString(lipgloss.NewStyle().Foreground(borderColors[i]).Render("\u2500"))
+		bottom.WriteString(lipgloss.NewStyle().Foreground(cells[i]).Render("\u2500"))
 	}
-	bottom.WriteString(lipgloss.NewStyle().Foreground(borderColors[innerWidth+1]).Render("\u256f"))
+	bottom.WriteString(lipgloss.NewStyle().Foreground(cells[innerWidth+1]).Render("\u256f"))
 
-	// Gradient side borders
-	leftColor := Theme.Gradient[0]
-	rightColor := Theme.Gradient[len(Theme.Gradient)-1]
-	leftBorder := lipgloss.NewStyle().Foreground(leftColor).Render("\u2502")
-	rightBorder := lipgloss.NewStyle().Foreground(rightColor).Render("\u2502")
+	// Side borders (solid color — leftmost palette for left, rightmost for right)
+	leftBorder := lipgloss.NewStyle().Foreground(borderColors[0]).Render("\u2502")
+	rightBorder := lipgloss.NewStyle().Foreground(borderColors[len(borderColors)-1]).Render("\u2502")
 	blankRow := leftBorder + strings.Repeat(" ", innerWidth) + rightBorder
 
 	// Pad each content line to innerWidth so the right border aligns
@@ -104,18 +113,24 @@ func gradientPopupBox(content string, width, paddingH int) string {
 	var rows []string
 	rows = append(rows, top.String())
 	rows = append(rows, blankRow) // top padding row
+	available := innerWidth - paddingH
+	if available < 0 {
+		available = 0
+	}
 	for _, line := range contentLines {
-		w := lipgloss.Width(line)
-		remaining := innerWidth - paddingH - w
-		if remaining < 0 {
-			remaining = 0
-		}
-		rows = append(rows, leftBorder+pad+line+strings.Repeat(" ", remaining)+rightBorder)
+		line = lipgloss.NewStyle().Width(available).MaxWidth(available).Render(line)
+		rows = append(rows, leftBorder+pad+line+rightBorder)
 	}
 	rows = append(rows, blankRow) // bottom padding row
 	rows = append(rows, bottom.String())
 
 	return strings.Join(rows, "\n")
+}
+
+// solidCardBox renders a card with a solid-colored rounded border.
+// Uses the same cardBox geometry so focused/unfocused dimensions match exactly.
+func solidCardBox(content string, width, paddingH int, borderColor color.Color) string {
+	return cardBox(content, width, paddingH, []color.Color{borderColor, borderColor, borderColor})
 }
 
 func renderSubDubSwitch(translationType string) string {
@@ -208,6 +223,28 @@ func truncateTitle(s string, maxLen int) string {
 		return string(runes[:maxLen])
 	}
 	return string(runes[:maxLen-3]) + "..."
+}
+
+// progressBar renders a compact progress bar like ████░░░░ 67%.
+func progressBar(ratio float64, width int) string {
+	if width < 4 {
+		width = 4
+	}
+	// Reserve 5 chars for " XX%"
+	barWidth := width - 5
+	if barWidth < 4 {
+		barWidth = 4
+	}
+	filled := int(ratio * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+	empty := barWidth - filled
+
+	bar := lipgloss.NewStyle().Foreground(Theme.Primary).Render(strings.Repeat("\u2588", filled)) +
+		lipgloss.NewStyle().Foreground(Theme.Border).Render(strings.Repeat("\u2591", empty))
+	pct := fmt.Sprintf(" %3d%%", int(ratio*100))
+	return bar + lipgloss.NewStyle().Foreground(Theme.Faint).Render(pct)
 }
 
 // statLine renders a label: value pair with consistent alignment for the sidebar.

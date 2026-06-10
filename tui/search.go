@@ -9,6 +9,7 @@ import (
 
 	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/config"
+	"github.com/hishantik/anilix/history"
 	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
@@ -79,6 +80,10 @@ type SearchModel struct {
 
 	// Kitty graphics
 	kittyImageID uint32 // current image ID in terminal memory, for cleanup
+
+	// Home screen
+	homeScreen *HomeState
+	hist       *history.History
 }
 
 func NewSearchModel() *SearchModel {
@@ -117,9 +122,11 @@ func NewSearchModel() *SearchModel {
 	p.SetWidth(40)
 
 	return &SearchModel{
-		state:            searchState,
+		state:            homeState,
 		searchState:      NewSearchState(),
 		episodeState:     NewEpisodeState(),
+		homeScreen:       NewHomeState(),
+		hist:             history.New(),
 		settingsState: &SettingsState{
 			Quality: func() string {
 				q := config.GetString("quality")
@@ -153,7 +160,16 @@ func NewSearchModel() *SearchModel {
 }
 
 func (m *SearchModel) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		fetchHomeHistoryCmd(m.hist),
+		fetchHomeTrendingCmd(m.anilistClient),
+		fetchHomePopularCmd(m.jikanClient),
+		fetchHomeGenreCmd(m.anilistClient, "Action"),
+		fetchHomeGenreCmd(m.anilistClient, "Romance"),
+		fetchHomeGenreCmd(m.anilistClient, "Comedy"),
+		fetchHomeGenreCmd(m.anilistClient, "Fantasy"),
+		m.loading.Tick,
+	)
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -374,6 +390,48 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Home screen navigation
+		if m.state == homeState {
+			switch msg.String() {
+			case "up", "k":
+				if m.homeScreen.ActiveSection > 0 {
+					m.homeScreen.ActiveSection--
+				}
+			case "down", "j":
+				if m.homeScreen.ActiveSection < len(m.homeScreen.Sections)-1 {
+					m.homeScreen.ActiveSection++
+				}
+			case "left", "h":
+				sec := m.homeScreen.Sections[m.homeScreen.ActiveSection]
+				if sec.Selected > 0 {
+					sec.Selected--
+				}
+			case "right", "l":
+				sec := m.homeScreen.Sections[m.homeScreen.ActiveSection]
+				if sec.Selected < len(sec.Items)-1 {
+					sec.Selected++
+				}
+			case "enter":
+				return m, m.selectHomeItem()
+			case "/":
+				m.prevState = homeState
+				m.state = searchState
+				m.textInput.Focus()
+				m.textInput.SetValue("")
+				return m, nil
+			case "ctrl+s":
+				m.prevState = m.state
+				m.state = settingsState
+				return m, nil
+			case "ctrl+c":
+				m.prevState = m.state
+				m.confirmSelect = 1
+				m.state = confirmQuitState
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keymap.Quit):
 			m.prevState = m.state
@@ -383,7 +441,12 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keymap.Back):
 			if m.state == detailState {
-				m.state = searchState
+				// Return to home if we came from home, otherwise search
+				if m.prevState == homeState {
+					m.state = homeState
+				} else {
+					m.state = searchState
+				}
 				m.episodeState = NewEpisodeState()
 				m.textInput.Placeholder = "Type to search..."
 				if m.kittyImageID != 0 {
@@ -700,24 +763,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case PlayStreamMsg:
-		m.episodeState.Playing = false
-		m.progressPercent = 1.0
-		m.progressTarget = 1.0
-		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
-		m.progress.SetWidth(m.width)
-		// Fire tracking update
-		if m.trackingEnabled && len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
-			selectedAnime := m.searchState.Results[m.searchState.Selected]
-			if selectedAnime.AniListID > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
-				epNumStr := m.episodeState.Episodes[m.episodeState.Selected]
-				epNum, _ := strconv.Atoi(epNumStr)
-				if epNum > 0 {
-					cmds = append(cmds, m.updateTrackingCmd(selectedAnime.AniListID, epNum, selectedAnime.EpisodeCount))
-				}
-			}
-		}
-
 	case TrackingStatusLoadedMsg:
 		m.episodeState.TrackingStatus = msg.Status
 		m.episodeState.TrackingProgress = msg.Progress
@@ -767,6 +812,108 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
 		m.progress.SetWidth(m.width)
 		m.episodeState.Err = msg.Err
+
+	case HomeHistoryLoadedMsg:
+		if len(m.homeScreen.Sections) > 0 {
+			m.homeScreen.Sections[0].Items = msg.Items
+			m.homeScreen.Sections[0].Loading = false
+		}
+
+	case HomeTrendingLoadedMsg:
+		if msg.Err != nil {
+			if len(m.homeScreen.Sections) > 1 {
+				m.homeScreen.Sections[1].Err = msg.Err
+				m.homeScreen.Sections[1].Loading = false
+			}
+		} else if len(m.homeScreen.Sections) > 1 {
+			m.homeScreen.Sections[1].Items = msg.Items
+			m.homeScreen.Sections[1].Loading = false
+		}
+
+	case HomePopularLoadedMsg:
+		if msg.Err != nil {
+			if len(m.homeScreen.Sections) > 2 {
+				m.homeScreen.Sections[2].Err = msg.Err
+				m.homeScreen.Sections[2].Loading = false
+			}
+		} else if len(m.homeScreen.Sections) > 2 {
+			m.homeScreen.Sections[2].Items = msg.Items
+			m.homeScreen.Sections[2].Loading = false
+		}
+
+	case HomeGenreLoadedMsg:
+		genreTitle := msg.Genre + " Anime"
+		for _, sec := range m.homeScreen.Sections {
+			if sec.Title == genreTitle {
+				if msg.Err != nil {
+					sec.Err = msg.Err
+				} else {
+					sec.Items = msg.Items
+				}
+				sec.Loading = false
+				break
+			}
+		}
+
+	case HomeItemResolvedMsg:
+		anime := msg.Anime
+		m.searchState.Results = []*source.Anime{anime}
+		m.searchState.Selected = 0
+		m.searchState.Metadata = nil
+		m.prevState = homeState
+		m.state = detailState
+		m.textInput.Placeholder = "Search episode..."
+		m.episodeState.Loading = true
+		m.episodeState.AnimeID = anime.AllAnimeID
+		m.progressPercent = 0
+		m.progressTarget = 0.4
+		cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
+		if anime.AniListID > 0 {
+			cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
+		}
+		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return progressTickMsg{}
+		}))
+
+	case PlayStreamMsg:
+		m.episodeState.Playing = false
+		m.progressPercent = 1.0
+		m.progressTarget = 1.0
+		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
+		m.progress.SetWidth(m.width)
+		// Record to history
+		if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
+			selectedAnime := m.searchState.Results[m.searchState.Selected]
+			epNum := ""
+			if m.episodeState.Selected < len(m.episodeState.Episodes) {
+				epNum = m.episodeState.Episodes[m.episodeState.Selected]
+			}
+			m.hist.Add(history.Entry{
+				AnimeName:    selectedAnime.Name,
+				MALID:        selectedAnime.MALID,
+				AniListID:    selectedAnime.AniListID,
+				AllAnimeID:   selectedAnime.AllAnimeID,
+				Episode:      epNum,
+				CoverURL:     selectedAnime.Cover,
+				Genres:       selectedAnime.Genres,
+				Score:        selectedAnime.Score,
+				Type:         selectedAnime.Type,
+				Year:         selectedAnime.Year,
+				EpisodeCount: selectedAnime.EpisodeCount,
+			})
+			_ = m.hist.Save()
+		}
+		// Fire tracking update
+		if m.trackingEnabled && len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
+			selectedAnime := m.searchState.Results[m.searchState.Selected]
+			if selectedAnime.AniListID > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
+				epNumStr := m.episodeState.Episodes[m.episodeState.Selected]
+				epNum, _ := strconv.Atoi(epNumStr)
+				if epNum > 0 {
+					cmds = append(cmds, m.updateTrackingCmd(selectedAnime.AniListID, epNum, selectedAnime.EpisodeCount))
+				}
+			}
+		}
 	}
 
 	return m, tea.Batch(cmds...)
