@@ -423,6 +423,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = settingsState
 				return m, nil
+			case "ctrl+t":
+				if m.searchState.TranslationType == "sub" {
+					m.searchState.TranslationType = "dub"
+				} else {
+					m.searchState.TranslationType = "sub"
+				}
+				config.Set("translation_type", m.searchState.TranslationType)
+				return m, nil
 			case "ctrl+c":
 				m.prevState = m.state
 				m.confirmSelect = 1

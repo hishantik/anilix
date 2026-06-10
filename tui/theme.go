@@ -170,18 +170,6 @@ func scoreBadge(score float64) string {
 	return gradientPopupBox(content, 14, 2)
 }
 
-// infoBlock renders a label/value pair with uppercase faint label and primary value.
-func infoBlock(label, value string) string {
-	lbl := lipgloss.NewStyle().
-		Foreground(Theme.Faint).
-		Width(10).
-		Render(strings.ToUpper(label))
-	val := lipgloss.NewStyle().
-		Foreground(Theme.Text).
-		Render(value)
-	return lbl + val
-}
-
 // genreTag renders a single genre as a compact colored badge.
 func genreTag(genre string) string {
 	return lipgloss.NewStyle().

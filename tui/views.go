@@ -149,24 +149,9 @@ func (m *SearchModel) renderMetadataPreview(width int, termHeight int) string {
 		sections = append(sections, scoreBadge(meta.Score))
 	}
 
-	// Info blocks
-	var info []string
-	if meta.Type != "" {
-		info = append(info, infoBlock("Type", meta.Type))
-	}
-	if meta.Status != "" {
-		info = append(info, infoBlock("Status", meta.Status))
-	}
-	if meta.Episodes > 0 {
-		info = append(info, infoBlock("Episodes", fmt.Sprintf("%d", meta.Episodes)))
-	}
-	if meta.Year > 0 {
-		info = append(info, infoBlock("Year", fmt.Sprintf("%d", meta.Year)))
-	}
-	if len(info) > 0 {
-		sections = append(sections, "")
-		sections = append(sections, strings.Join(info, "\n"))
-	}
+	// Compact info card
+	sections = append(sections, "")
+	sections = append(sections, compactInfoCard(meta))
 
 	// Stats
 	var stats []string
@@ -337,24 +322,9 @@ func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int, term
 		sections = append(sections, strings.Join(stats, "\n"))
 	}
 
-	// Info blocks
-	var info []string
-	if meta.Type != "" {
-		info = append(info, infoBlock("Type", meta.Type))
-	}
-	if meta.Status != "" {
-		info = append(info, infoBlock("Status", meta.Status))
-	}
-	if meta.Episodes > 0 {
-		info = append(info, infoBlock("Episodes", fmt.Sprintf("%d", meta.Episodes)))
-	}
-	if meta.Year > 0 {
-		info = append(info, infoBlock("Year", fmt.Sprintf("%d", meta.Year)))
-	}
-	if len(info) > 0 {
-		sections = append(sections, "")
-		sections = append(sections, strings.Join(info, "\n"))
-	}
+	// Compact info card
+	sections = append(sections, "")
+	sections = append(sections, compactInfoCard(meta))
 
 	// Genre tags — wrap to fit within panel width
 	if len(meta.Genres) > 0 {
@@ -449,8 +419,12 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 
 	// Tracking status
 	if m.trackingEnabled && m.episodeState.TrackingStatus != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Success).Render(
-			formatTrackingStatus(m.episodeState.TrackingStatus, m.episodeState.TrackingProgress)))
+		totalEp := 0
+		if m.searchState.Metadata != nil {
+			totalEp = m.searchState.Metadata.Episodes
+		}
+		lines = append(lines, renderWatchProgress(
+			m.episodeState.TrackingStatus, m.episodeState.TrackingProgress, totalEp, width))
 	} else if m.trackingEnabled {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
 	}
@@ -501,23 +475,8 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(meta.TitleNative))
 	}
 
-	// Info line
-	var infoParts []string
-	if meta.Year > 0 {
-		infoParts = append(infoParts, fmt.Sprintf("%d", meta.Year))
-	}
-	if meta.Type != "" {
-		infoParts = append(infoParts, meta.Type)
-	}
-	if meta.Episodes > 0 {
-		infoParts = append(infoParts, fmt.Sprintf("%d episodes", meta.Episodes))
-	}
-	if meta.Status != "" {
-		infoParts = append(infoParts, meta.Status)
-	}
-	if len(infoParts) > 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(strings.Join(infoParts, "  \u00b7  ")))
-	}
+	// Compact info card
+	lines = append(lines, compactInfoCard(meta))
 
 	// Genres
 	if len(meta.Genres) > 0 {
@@ -565,8 +524,12 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 
 	// Tracking status (single-column)
 	if m.trackingEnabled && m.episodeState.TrackingStatus != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Success).Render(
-			formatTrackingStatus(m.episodeState.TrackingStatus, m.episodeState.TrackingProgress)))
+		totalEp := 0
+		if m.searchState.Metadata != nil {
+			totalEp = m.searchState.Metadata.Episodes
+		}
+		lines = append(lines, renderWatchProgress(
+			m.episodeState.TrackingStatus, m.episodeState.TrackingProgress, totalEp, width))
 	} else if m.trackingEnabled {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
 	}
@@ -890,7 +853,42 @@ func (m *SearchModel) renderChrome(content string) string {
 	return result
 }
 
-func formatTrackingStatus(status string, progress int) string {
+// compactInfoCard renders type/status/episodes/year as a compact 2-line info card.
+func compactInfoCard(meta *MetadataPanel) string {
+	// Line 1: Type • N Episodes
+	var line1 []string
+	if meta.Type != "" {
+		line1 = append(line1, meta.Type)
+	}
+	if meta.Episodes > 0 {
+		line1 = append(line1, fmt.Sprintf("%d Episodes", meta.Episodes))
+	}
+
+	// Line 2: Status • Year
+	var line2 []string
+	if meta.Status != "" {
+		line2 = append(line2, meta.Status)
+	}
+	if meta.Year > 0 {
+		line2 = append(line2, fmt.Sprintf("%d", meta.Year))
+	}
+
+	sep := lipgloss.NewStyle().Foreground(Theme.Faint).Render(" \u2022 ")
+
+	var parts []string
+	if len(line1) > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(Theme.Text).Render(strings.Join(line1, sep)))
+	}
+	if len(line2) > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(Theme.Faint).Render(strings.Join(line2, sep)))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// renderWatchProgress renders a compact watch progress component.
+// Produces a 2-line block: "Status • current/total" + progress bar with percentage.
+func renderWatchProgress(status string, progress, totalEpisodes, width int) string {
 	labels := map[string]string{
 		"CURRENT":   "Watching",
 		"PLANNING":  "Planned",
@@ -903,5 +901,38 @@ func formatTrackingStatus(status string, progress int) string {
 	if label == "" {
 		label = status
 	}
-	return fmt.Sprintf("AniList: %s (Ep %d)", label, progress)
+
+	// Status color based on state
+	statusColor := Theme.Success
+	switch status {
+	case "DROPPED":
+		statusColor = Theme.Error
+	case "PLANNING":
+		statusColor = Theme.Faint
+	case "PAUSED":
+		statusColor = Theme.Warning
+	case "COMPLETED":
+		statusColor = Theme.Primary
+	}
+
+	// Line 1: Status • ep/total
+	episodeStr := fmt.Sprintf("%d", progress)
+	if totalEpisodes > 0 {
+		episodeStr = fmt.Sprintf("%d/%d", progress, totalEpisodes)
+	}
+	statusLine := lipgloss.NewStyle().Foreground(statusColor).Bold(true).Render(label) +
+		lipgloss.NewStyle().Foreground(Theme.Faint).Render(" \u2022 ") +
+		lipgloss.NewStyle().Foreground(Theme.Text).Render(episodeStr)
+
+	// Line 2: progress bar (only if total is known)
+	if totalEpisodes > 0 && progress > 0 {
+		ratio := float64(progress) / float64(totalEpisodes)
+		if ratio > 1 {
+			ratio = 1
+		}
+		bar := progressBar(ratio, width)
+		return statusLine + "\n" + bar
+	}
+
+	return statusLine
 }
