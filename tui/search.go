@@ -392,9 +392,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Home screen navigation
 		if m.state == homeState {
-			prevSection := m.homeScreen.ActiveSection
-			prevSelected := m.homeScreen.Sections[prevSection].Selected
-
 			switch msg.String() {
 			case "up", "k":
 				if m.homeScreen.ActiveSection > 0 {
@@ -433,16 +430,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// If selection changed, fetch details for the new item if needed
-			newSection := m.homeScreen.ActiveSection
-			newSelected := m.homeScreen.Sections[newSection].Selected
-			if (newSection != prevSection || newSelected != prevSelected) &&
-				len(m.homeScreen.Sections[newSection].Items) > newSelected {
-				item := m.homeScreen.Sections[newSection].Items[newSelected]
-				if item.Synopsis == "" && item.AniListID > 0 {
-					return m, fetchHomeItemDetailsCmd(newSection, newSelected, item, m.anilistClient)
-				}
-			}
 			return m, nil
 		}
 
@@ -780,6 +767,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TrackingStatusLoadedMsg:
 		m.episodeState.TrackingStatus = msg.Status
 		m.episodeState.TrackingProgress = msg.Progress
+		if len(m.episodeState.Episodes) > 0 {
+			m.updateEpisodeList()
+		}
 
 	case TrackingUpdateMsg:
 		if msg.Err != nil {
@@ -787,6 +777,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.episodeState.TrackingStatus = msg.Status
 			m.episodeState.TrackingProgress = msg.Progress
+			if len(m.episodeState.Episodes) > 0 {
+				m.updateEpisodeList()
+			}
 		}
 
 	case AniListLoginMsg:
@@ -869,19 +862,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case HomeDetailsLoadedMsg:
-		if msg.SectionIndex < len(m.homeScreen.Sections) {
-			sec := m.homeScreen.Sections[msg.SectionIndex]
-			if msg.ItemIndex < len(sec.Items) {
-				sec.Items[msg.ItemIndex].Status = msg.Status
-				sec.Items[msg.ItemIndex].Synopsis = msg.Synopsis
-			}
-		}
 	case HomeItemResolvedMsg:
 		anime := msg.Anime
 		m.searchState.Results = []*source.Anime{anime}
 		m.searchState.Selected = 0
-		m.searchState.Metadata = nil
 		m.prevState = homeState
 		m.state = detailState
 		m.textInput.Placeholder = "Search episode..."
@@ -890,6 +874,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressPercent = 0
 		m.progressTarget = 0.4
 		cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
+		// Fetch metadata if not already populated by selectHomeItem
+		if m.searchState.Metadata == nil && anime.AniListID > 0 {
+			cmds = append(cmds, m.fetchMetadata())
+		}
 		if anime.AniListID > 0 {
 			cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
 		}
@@ -999,13 +987,23 @@ func (m *SearchModel) updateSearchList() {
 }
 
 func (m *SearchModel) updateEpisodeList() {
+	trackingProgress := m.episodeState.TrackingProgress
 	items := make([]list.Item, 0, len(m.episodeState.Episodes))
 	for i, ep := range m.episodeState.Episodes {
 		title := ""
 		if len(m.episodeState.EpisodeTitles) > i {
 			title = m.episodeState.EpisodeTitles[i]
 		}
-		items = append(items, episodeItem{number: ep, title: title})
+		epNum := parseEpisodeNum(ep)
+		prog := episodeUnwatched
+		if trackingProgress > 0 && epNum > 0 {
+			if epNum <= trackingProgress {
+				prog = episodeWatched
+			} else if epNum == trackingProgress+1 {
+				prog = episodeCurrent
+			}
+		}
+		items = append(items, episodeItem{number: ep, title: title, progress: prog})
 	}
 	cmd := m.episodeList.SetItems(items)
 	if cmd != nil {
@@ -1019,6 +1017,7 @@ func (m *SearchModel) filterEpisodesByNumber(query string) {
 		m.updateEpisodeList()
 		return
 	}
+	trackingProgress := m.episodeState.TrackingProgress
 	items := make([]list.Item, 0)
 	for i, ep := range m.episodeState.Episodes {
 		if strings.Contains(ep, query) {
@@ -1026,7 +1025,16 @@ func (m *SearchModel) filterEpisodesByNumber(query string) {
 			if len(m.episodeState.EpisodeTitles) > i {
 				title = m.episodeState.EpisodeTitles[i]
 			}
-			items = append(items, episodeItem{number: ep, title: title})
+			epNum := parseEpisodeNum(ep)
+			prog := episodeUnwatched
+			if trackingProgress > 0 && epNum > 0 {
+				if epNum <= trackingProgress {
+					prog = episodeWatched
+				} else if epNum == trackingProgress+1 {
+					prog = episodeCurrent
+				}
+			}
+			items = append(items, episodeItem{number: ep, title: title, progress: prog})
 		}
 	}
 	cmd := m.episodeList.SetItems(items)

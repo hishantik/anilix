@@ -55,15 +55,32 @@ func (i animeItem) Description() string {
 func (i animeItem) FilterValue() string { return i.anime.Name }
 
 type episodeItem struct {
-	number string
-	title  string
+	number   string
+	title    string
+	progress episodeProgress // watched, current, or unwatched
 }
 
+type episodeProgress int
+
+const (
+	episodeUnwatched episodeProgress = iota
+	episodeWatched
+	episodeCurrent
+)
+
 func (i episodeItem) Title() string {
-	if i.title != "" {
-		return fmt.Sprintf("Episode %s: %s", i.number, i.title)
+	var prefix string
+	switch i.progress {
+	case episodeWatched:
+		prefix = "\u2713 "
+	case episodeCurrent:
+		prefix = "\u25b6 "
 	}
-	return fmt.Sprintf("Episode %s", i.number)
+
+	if i.title != "" {
+		return fmt.Sprintf("%sEpisode %s: %s", prefix, i.number, i.title)
+	}
+	return fmt.Sprintf("%sEpisode %s", prefix, i.number)
 }
 
 func (i episodeItem) Description() string { return "" }

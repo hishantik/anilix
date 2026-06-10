@@ -455,7 +455,11 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
 	}
 
-	// Episode area
+	// Episode section header + list
+	epCount := len(m.episodeState.Episodes)
+	epHeader := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render(
+		fmt.Sprintf("\u2501\u2501 Episodes (%d) \u2501\u2501", epCount))
+
 	if m.episodeState.Loading {
 		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episodes...")
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(msg))
@@ -469,7 +473,8 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 			fmt.Sprintf("Playing: %s - Episode %s", selectedAnime.Name, epNum))
 		lines = append(lines, playMsg)
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Launching player..."))
-	} else if len(m.episodeState.Episodes) > 0 {
+	} else if epCount > 0 {
+		lines = append(lines, epHeader)
 		lines = append(lines, m.episodeList.View())
 	} else if m.episodeState.Err != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))
@@ -567,6 +572,10 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 	}
 
 	// Episodes
+	epCount := len(m.episodeState.Episodes)
+	epHeader := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render(
+		fmt.Sprintf("\u2501\u2501 Episodes (%d) \u2501\u2501", epCount))
+
 	if m.episodeState.Loading {
 		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading episodes...")
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render(msg))
@@ -580,7 +589,8 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 			fmt.Sprintf("Playing: %s - Episode %s", selectedAnime.Name, epNum))
 		lines = append(lines, playMsg)
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Launching player..."))
-	} else if len(m.episodeState.Episodes) > 0 {
+	} else if epCount > 0 {
+		lines = append(lines, epHeader)
 		lines = append(lines, m.episodeList.View())
 	} else if m.episodeState.Err != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))

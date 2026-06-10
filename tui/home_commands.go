@@ -68,8 +68,6 @@ func fetchHomeTrendingCmd(client *anilist.Client) tea.Cmd {
 				Genres:       m.Genres,
 				Year:         m.StartDate.Year,
 				EpisodeCount: m.Episodes,
-				Status:       m.Status,
-				Synopsis:     stripHTML(m.Description),
 				Source:       "trending",
 			})
 		}
@@ -144,8 +142,6 @@ func fetchHomeGenreCmd(client *anilist.Client, genre string) tea.Cmd {
 				Genres:       m.Genres,
 				Year:         m.StartDate.Year,
 				EpisodeCount: m.Episodes,
-				Status:       m.Status,
-				Synopsis:     stripHTML(m.Description),
 				Source:       genre,
 			})
 		}
@@ -153,35 +149,6 @@ func fetchHomeGenreCmd(client *anilist.Client, genre string) tea.Cmd {
 	}
 }
 
-// fetchHomeItemDetailsCmd lazily fetches synopsis/status for a home item from AniList.
-func fetchHomeItemDetailsCmd(sectionIdx, itemIdx int, item HomeItem, client *anilist.Client) tea.Cmd {
-	return func() tea.Msg {
-		if item.AniListID <= 0 {
-			return nil
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		data, err := client.GetAnime(ctx, item.AniListID)
-		if err != nil {
-			return nil
-		}
-
-		synopsis := stripHTML(data.Description)
-		// Truncate synopsis for the panel
-		if len([]rune(synopsis)) > 300 {
-			synopsis = truncateSynopsis(synopsis, 300)
-		}
-
-		return HomeDetailsLoadedMsg{
-			SectionIndex: sectionIdx,
-			ItemIndex:    itemIdx,
-			Status:       data.Status,
-			Synopsis:     synopsis,
-		}
-	}
-}
 
 // resolveHomeItemAllAnimeID searches AllAnime for an anime and resolves its AllAnimeID.
 func resolveHomeItemAllAnimeID(anime *source.Anime, client *Allanime.AllanimeClient, translationType string) tea.Cmd {
@@ -242,24 +209,6 @@ func searchByNameForHome(name string, client *Allanime.AllanimeClient, translati
 		// Return first result as a source.Anime
 		anime := client.MapToAnime(&shows[0])
 		return SearchResultsMsg{Results: []*source.Anime{anime}}
-	}
-}
-
-// formatStatus converts raw AniList status to a human-readable label.
-func formatStatus(status string) string {
-	switch status {
-	case "FINISHED":
-		return "Finished Airing"
-	case "RELEASING":
-		return "Currently Airing"
-	case "NOT_YET_RELEASED":
-		return "Not Yet Aired"
-	case "CANCELLED":
-		return "Cancelled"
-	case "HIATUS":
-		return "On Hiatus"
-	default:
-		return status
 	}
 }
 

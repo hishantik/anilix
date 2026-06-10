@@ -87,13 +87,6 @@ type AniListLoginMsg struct {
 	Err error
 }
 
-// HomeDetailsLoadedMsg is sent when additional details (synopsis/status) are fetched for a home item.
-type HomeDetailsLoadedMsg struct {
-	SectionIndex int
-	ItemIndex    int
-	Status       string
-	Synopsis     string
-}
 
 // UpdateCheckMsg is sent after checking GitHub for the latest release.
 type UpdateCheckMsg struct {
