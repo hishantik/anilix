@@ -104,3 +104,13 @@ type MediaListResponse struct {
 type SaveMediaListResponse struct {
 	SaveMediaListEntry MediaListEntry `json:"SaveMediaListEntry"`
 }
+
+// Recommendations response from AniList Media.recommendations query
+
+type RecommendationsResponse struct {
+	Media struct {
+		Recommendations []struct {
+			Node MediaData `json:"node"`
+		} `json:"recommendations"`
+	} `json:"Media"`
+}

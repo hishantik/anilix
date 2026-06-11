@@ -412,7 +412,7 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	if m.episodeState.ResumeEpisode > 0 && !m.episodeState.Loading && !m.episodeState.Playing {
 		fixedLines += 4 // resume card: blank + 2 lines + blank
 	}
-	episodeHeight := height - fixedLines - 8 // chrome reservation
+	episodeHeight := height - fixedLines - 16 // chrome + recommendations reservation
 	if episodeHeight < 5 {
 		episodeHeight = 5
 	}
@@ -464,6 +464,13 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))
 	} else {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("No episodes found"))
+	}
+
+	// Recommendations section
+	if !m.episodeState.Loading {
+		lines = append(lines, "")
+		lines = append(lines, m.renderRecommendationsSection(width))
+		lines = append(lines, "")
 	}
 
 	// Width + MaxWidth on each line to prevent overflow
@@ -576,6 +583,13 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))
 	} else {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("No episodes found"))
+	}
+
+	// Recommendations section
+	if !m.episodeState.Loading {
+		lines = append(lines, "")
+		lines = append(lines, m.renderRecommendationsSection(width))
+		lines = append(lines, "")
 	}
 
 	return strings.Join(lines, "\n")
@@ -1014,4 +1028,54 @@ func (m *SearchModel) hasHistory() bool {
 		}
 	}
 	return false
+}
+
+// renderRecommendationsSection renders the recommended anime cards section on the detail page.
+func (m *SearchModel) renderRecommendationsSection(width int) string {
+	recState := m.episodeState
+
+	// Section header
+	header := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render("\u2501\u2501 Recommended \u2501\u2501")
+
+	if recState.RecLoading {
+		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading recommendations...")
+		return header + "\n" + lipgloss.NewStyle().Foreground(Theme.Faint).Render(msg)
+	}
+
+	if recState.RecErr != nil || len(recState.RecItems) == 0 {
+		return header + "\n" + lipgloss.NewStyle().Foreground(Theme.Faint).Render("   No recommendations available.")
+	}
+
+	// Card layout — same as home screen
+	cardWidth := 26
+	cardsPerRow := (width - 4) / cardWidth
+	if cardsPerRow < 1 {
+		cardsPerRow = 1
+	}
+	if cardsPerRow > 6 {
+		cardsPerRow = 6
+	}
+	cardWidth = (width - 4) / cardsPerRow
+
+	// Determine visible slice
+	start := 0
+	if recState.RecSelected >= cardsPerRow {
+		start = recState.RecSelected - cardsPerRow + 1
+	}
+	end := len(recState.RecItems)
+	if end-start > cardsPerRow {
+		end = start + cardsPerRow
+	}
+	visibleItems := recState.RecItems[start:end]
+
+	var cards []string
+	for i, item := range visibleItems {
+		globalIdx := start + i
+		isSelected := recState.RecFocus && globalIdx == recState.RecSelected
+		card := m.renderHomeCard(item, cardWidth, isSelected)
+		cards = append(cards, card)
+	}
+
+	cardRow := lipgloss.JoinHorizontal(lipgloss.Top, cards...)
+	return header + "\n" + cardRow
 }

@@ -394,6 +394,79 @@ func (c *Client) doGraphQLCurl(ctx context.Context, reqBody []byte) ([]byte, err
 	return result.Data, nil
 }
 
+// GetRecommendations fetches recommended anime for a given AniList ID
+func (c *Client) GetRecommendations(ctx context.Context, anilistID int, limit int) ([]MediaData, error) {
+	c.rateLimiter.waitForToken()
+
+	gql := `query ($id: Int, $limit: Int) {
+		Media(id: $id, type: ANIME) {
+			recommendations(perPage: $limit, sort: RATING_DESC) {
+				node {
+					id
+					title { romaji english native userPreferred }
+					coverImage { extraLarge large medium }
+					type format status
+					startDate { year }
+					episodes genres
+					averageScore popularity
+				}
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"id":    anilistID,
+		"limit": limit,
+	}
+
+	resp, err := c.doGraphQL(ctx, gql, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(resp, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	mediaObj, ok := rawResp["Media"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no Media in response")
+	}
+
+	recsObj, ok := mediaObj["recommendations"].(map[string]interface{})
+	if !ok {
+		return []MediaData{}, nil
+	}
+
+	recsList, ok := recsObj["recommendations"].([]interface{})
+	if !ok {
+		return []MediaData{}, nil
+	}
+
+	var results []MediaData
+	for _, r := range recsList {
+		recObj, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nodeObj, ok := recObj["node"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		dataBytes, _ := json.Marshal(nodeObj)
+		var media MediaData
+		if err := json.Unmarshal(dataBytes, &media); err == nil && media.ID != 0 {
+			results = append(results, media)
+			if len(results) >= limit {
+				break
+			}
+		}
+	}
+
+	return results, nil
+}
+
 // SearchAnime searches for anime by title
 func (c *Client) SearchAnime(ctx context.Context, query string, limit int) ([]MediaData, error) {
 	c.rateLimiter.waitForToken()

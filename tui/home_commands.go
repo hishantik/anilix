@@ -212,6 +212,39 @@ func searchByNameForHome(name string, client *Allanime.AllanimeClient, translati
 	}
 }
 
+
+// fetchRecommendationsCmd fetches anime recommendations from AniList for a given anime.
+func fetchRecommendationsCmd(anilistID int, client *anilist.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		data, err := client.GetRecommendations(ctx, anilistID, 12)
+		if err != nil {
+			return RecommendationsLoadedMsg{Err: err}
+		}
+
+		items := make([]HomeItem, 0, len(data))
+		for _, m := range data {
+			name := m.Title.English
+			if name == "" {
+				name = m.Title.Romaji
+			}
+			items = append(items, HomeItem{
+				Name:         name,
+				AniListID:    m.ID,
+				Cover:        m.CoverImage.Large,
+				Score:        float64(m.AverageScore) / 10,
+				Type:         m.Format,
+				Genres:       m.Genres,
+				Year:         m.StartDate.Year,
+				EpisodeCount: m.Episodes,
+				Source:       "recommendation",
+			})
+		}
+		return RecommendationsLoadedMsg{Items: items}
+	}
+}
 // trimAnimeName truncates an anime name to fit within maxLen characters.
 // Uses a proper ellipsis character (…) when truncating.
 func trimAnimeName(name string, maxLen int) string {

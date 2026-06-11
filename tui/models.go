@@ -69,6 +69,11 @@ type EpisodeState struct {
 	TrackingProgress  int
 	ResumeEpisode     int  // episode number to resume (0 = no resume data)
 	ResumeFocus       bool // whether the resume card has keyboard focus
+	RecItems    []HomeItem  // recommendation card data
+	RecSelected int         // focused card index in recommendations
+	RecFocus    bool        // keyboard focus on recommendation cards
+	RecLoading  bool
+	RecErr      error
 }
 
 // EpisodeMetadataPanel holds metadata for a single episode

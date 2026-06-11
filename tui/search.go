@@ -652,10 +652,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(cmds...)
 					}
 				}
-				// j/k/Tab/down/up moves focus to episode list
-				if msg.String() == "tab" || msg.String() == "j" || msg.String() == "k" ||
-					msg.String() == "down" || msg.String() == "up" {
+				// j/Tab/down moves focus to episode list
+				if msg.String() == "tab" || msg.String() == "j" || msg.String() == "down" {
 					m.episodeState.ResumeFocus = false
+					return m, nil
+				}
+				// Consume up/k while resume card is focused (top item, nowhere to go up)
+				if msg.String() == "up" || msg.String() == "k" {
 					return m, nil
 				}
 				// Consume other keys while resume card is focused (don't pass to episode list)
@@ -669,6 +672,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 				m.filterEpisodesByNumber(m.textInput.Value())
 				return m, tea.Batch(cmds...)
+			}
+			// Navigate back up to resume card when at top of episode list
+			if (msg.String() == "up" || msg.String() == "k") && m.episodeList.Index() == 0 && m.episodeState.ResumeEpisode > 0 {
+				m.episodeState.ResumeFocus = true
+				return m, nil
 			}
 			var cmd tea.Cmd
 			m.episodeList, cmd = m.episodeList.Update(msg)
@@ -774,6 +782,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.episodeState.MetadataLoading = true
 			cmds = append(cmds, m.fetchEpisodeMetadata())
 		}
+		// Fetch recommendations after episodes load (lazy)
+		if len(m.searchState.Results) > 0 && m.searchState.Results[m.searchState.Selected].AniListID > 0 {
+			cmds = append(cmds, fetchRecommendationsCmd(m.searchState.Results[m.searchState.Selected].AniListID, m.anilistClient))
+		}
 
 	case episodeMetadataDebounceMsg:
 		if msg.Index == m.episodeState.Selected {
@@ -860,6 +872,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateEpisodeList()
 			}
 		}
+
+	case RecommendationsLoadedMsg:
+		m.episodeState.RecItems = msg.Items
+		m.episodeState.RecLoading = false
+		m.episodeState.RecErr = msg.Err
 
 	case AniListLoginMsg:
 		m.state = settingsState
@@ -952,6 +969,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeState.AnimeID = anime.AllAnimeID
 		m.progressPercent = 0
 		m.progressTarget = 0.4
+		// Compute resume episode from history (AniList progress overrides later)
+		m.computeResumeEpisode()
+		m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
 		cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
 		// Fetch metadata if not already populated by selectHomeItem
 		if m.searchState.Metadata == nil && anime.AniListID > 0 {

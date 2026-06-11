@@ -124,3 +124,9 @@ type HomeGenreLoadedMsg struct {
 type HomeItemResolvedMsg struct {
 	Anime *source.Anime
 }
+
+// RecommendationsLoadedMsg is sent when anime recommendations finish loading.
+type RecommendationsLoadedMsg struct {
+	Items []HomeItem
+	Err   error
+}
