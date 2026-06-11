@@ -537,6 +537,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			} else if m.state == detailState {
+				// When resume card has focus, Enter is handled below in the episode list block
+				if m.episodeState.ResumeFocus && m.episodeState.ResumeEpisode > 0 {
+					break // skip episode list selection — handled in episode list block below
+				}
 				m.episodeState.Selected = m.episodeList.Index()
 				if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
 					selectedAnime := m.searchState.Results[m.searchState.Selected]
@@ -621,6 +625,42 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		} else if m.state == detailState && !m.textInput.Focused() && len(m.episodeState.Episodes) > 0 {
+			// Resume card: Enter or r plays the resume episode
+			if m.episodeState.ResumeFocus && m.episodeState.ResumeEpisode > 0 {
+				if key.Matches(msg, m.keymap.Select) || key.Matches(msg, m.keymap.Resume) {
+					epStr := strconv.Itoa(m.episodeState.ResumeEpisode)
+					// Find the episode index in the list
+					idx := -1
+					for i, ep := range m.episodeState.Episodes {
+						if ep == epStr {
+							idx = i
+							break
+						}
+					}
+					if idx >= 0 {
+						m.episodeState.Selected = idx
+						m.episodeList.Select(idx)
+						selectedAnime := m.searchState.Results[m.searchState.Selected]
+						m.episodeState.Playing = true
+						m.progressPercent = 0
+						m.progressTarget = 0.5
+						var cmds []tea.Cmd
+						cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, epStr, selectedAnime.Name, selectedAnime.MALID))
+						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+							return progressTickMsg{}
+						}))
+						return m, tea.Batch(cmds...)
+					}
+				}
+				// j/k/Tab/down/up moves focus to episode list
+				if msg.String() == "tab" || msg.String() == "j" || msg.String() == "k" ||
+					msg.String() == "down" || msg.String() == "up" {
+					m.episodeState.ResumeFocus = false
+					return m, nil
+				}
+				// Consume other keys while resume card is focused (don't pass to episode list)
+				return m, nil
+			}
 			if msg.String() >= "0" && msg.String() <= "9" {
 				m.textInput.Focus()
 				m.textInput.SetValue("")

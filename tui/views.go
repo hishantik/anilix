@@ -409,6 +409,9 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	fixedLines += 3            // separators + blank lines
 	fixedLines += synopsisLines
 	fixedLines += 3            // second separator + blanks
+	if m.episodeState.ResumeEpisode > 0 && !m.episodeState.Loading && !m.episodeState.Playing {
+		fixedLines += 4 // resume card: blank + 2 lines + blank
+	}
 	episodeHeight := height - fixedLines - 8 // chrome reservation
 	if episodeHeight < 5 {
 		episodeHeight = 5
@@ -427,6 +430,13 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 			m.episodeState.TrackingStatus, m.episodeState.TrackingProgress, totalEp, width))
 	} else if m.trackingEnabled {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
+	}
+
+	// Resume Watching card
+	if m.episodeState.ResumeEpisode > 0 && !m.episodeState.Loading && !m.episodeState.Playing {
+		lines = append(lines, "")
+		lines = append(lines, m.renderResumeCard(width))
+		lines = append(lines, "")
 	}
 
 	// Episode section header + list
@@ -532,6 +542,13 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 			m.episodeState.TrackingStatus, m.episodeState.TrackingProgress, totalEp, width))
 	} else if m.trackingEnabled {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Not in your AniList"))
+	}
+
+	// Resume Watching card
+	if m.episodeState.ResumeEpisode > 0 && !m.episodeState.Loading && !m.episodeState.Playing {
+		lines = append(lines, "")
+		lines = append(lines, m.renderResumeCard(width))
+		lines = append(lines, "")
 	}
 
 	// Episodes
@@ -935,4 +952,66 @@ func renderWatchProgress(status string, progress, totalEpisodes, width int) stri
 	}
 
 	return statusLine
+}
+
+// renderResumeCard renders a focusable resume watching card.
+func (m *SearchModel) renderResumeCard(width int) string {
+	ep := m.episodeState.ResumeEpisode
+	totalEp := 0
+	if m.searchState.Metadata != nil {
+		totalEp = m.searchState.Metadata.Episodes
+	}
+
+	// Determine label
+	var line1, line2 string
+	if m.episodeState.TrackingProgress > 0 || (m.hist != nil && m.hasHistory()) {
+		line1 = "\u25b6 Resume Watching"
+		if totalEp > 0 {
+			pct := ep * 100 / totalEp
+			if pct > 100 {
+				pct = 100
+			}
+			line2 = fmt.Sprintf("Episode %d \u2022 %d%% Complete", ep, pct)
+		} else {
+			line2 = fmt.Sprintf("Episode %d", ep)
+		}
+	} else {
+		line1 = "\u25b6 Start Watching"
+		line2 = fmt.Sprintf("Episode %d", ep)
+	}
+
+	// Styles based on focus
+	var titleStyle, detailStyle lipgloss.Style
+	if m.episodeState.ResumeFocus {
+		titleStyle = lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true)
+		detailStyle = lipgloss.NewStyle().Foreground(Theme.Text)
+	} else {
+		titleStyle = lipgloss.NewStyle().Foreground(Theme.Faint).Bold(true)
+		detailStyle = lipgloss.NewStyle().Foreground(Theme.Faint)
+	}
+
+	content := titleStyle.Render(line1) + "\n" + detailStyle.Render(line2)
+
+	if m.episodeState.ResumeFocus {
+		return gradientPopupBox(content, width, 1)
+	}
+	return solidCardBox(content, width, 1, Theme.Border)
+}
+
+// hasHistory checks if there's a local history entry for the current anime.
+func (m *SearchModel) hasHistory() bool {
+	if m.hist == nil {
+		return false
+	}
+	anime := m.searchState.Results[m.searchState.Selected]
+	if anime == nil {
+		return false
+	}
+	entries := m.hist.RecentUnique(50)
+	for _, e := range entries {
+		if e.MALID == anime.MALID {
+			return true
+		}
+	}
+	return false
 }
