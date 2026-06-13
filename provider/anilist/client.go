@@ -398,25 +398,28 @@ func (c *Client) doGraphQLCurl(ctx context.Context, reqBody []byte) ([]byte, err
 func (c *Client) GetRecommendations(ctx context.Context, anilistID int, limit int) ([]MediaData, error) {
 	c.rateLimiter.waitForToken()
 
-	gql := `query ($id: Int, $limit: Int) {
+	gql := `query ($id: Int, $perPage: Int) {
 		Media(id: $id, type: ANIME) {
-			recommendations(perPage: $limit, sort: RATING_DESC) {
-				node {
+			recommendations(perPage: $perPage, sort: RATING_DESC) {
+				nodes {
 					id
-					title { romaji english native userPreferred }
-					coverImage { extraLarge large medium }
-					type format status
-					startDate { year }
-					episodes genres
-					averageScore popularity
+					mediaRecommendation {
+						id
+						title { romaji english native userPreferred }
+						coverImage { extraLarge large medium }
+						type format status
+						startDate { year }
+						episodes genres
+						averageScore popularity
+					}
 				}
 			}
 		}
 	}`
 
 	variables := map[string]interface{}{
-		"id":    anilistID,
-		"limit": limit,
+		"id":      anilistID,
+		"perPage": limit,
 	}
 
 	resp, err := c.doGraphQL(ctx, gql, variables)
@@ -424,33 +427,48 @@ func (c *Client) GetRecommendations(ctx context.Context, anilistID int, limit in
 		return nil, err
 	}
 
+	return parseRecommendationsResponse(resp, limit), nil
+}
+
+// parseRecommendationsResponse extracts a []MediaData from an AniList
+// recommendations response. The shape is:
+//
+//	Media.recommendations.nodes[].mediaRecommendation
+//
+// where `Media.recommendations` is a RecommendationConnection whose list field
+// is `nodes`, and each Recommendation node wraps the recommended Media under
+// `mediaRecommendation` (not `node` and not `recommendations`).
+func parseRecommendationsResponse(raw []byte, limit int) []MediaData {
 	var rawResp map[string]interface{}
-	if err := json.Unmarshal(resp, &rawResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := json.Unmarshal(raw, &rawResp); err != nil {
+		return nil
 	}
 
 	mediaObj, ok := rawResp["Media"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("no Media in response")
+		return nil
 	}
 
 	recsObj, ok := mediaObj["recommendations"].(map[string]interface{})
 	if !ok {
-		return []MediaData{}, nil
+		return []MediaData{}
 	}
 
-	recsList, ok := recsObj["recommendations"].([]interface{})
+	recsList, ok := recsObj["nodes"].([]interface{})
 	if !ok {
-		return []MediaData{}, nil
+		return []MediaData{}
 	}
 
-	var results []MediaData
+	results := make([]MediaData, 0, len(recsList))
 	for _, r := range recsList {
 		recObj, ok := r.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		nodeObj, ok := recObj["node"].(map[string]interface{})
+		// Each Recommendation wraps the recommended Media under
+		// mediaRecommendation — NOT `node` (which doesn't exist on
+		// Recommendation).
+		nodeObj, ok := recObj["mediaRecommendation"].(map[string]interface{})
 		if !ok {
 			continue
 		}
@@ -464,7 +482,7 @@ func (c *Client) GetRecommendations(ctx context.Context, anilistID int, limit in
 		}
 	}
 
-	return results, nil
+	return results
 }
 
 // SearchAnime searches for anime by title
