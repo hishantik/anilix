@@ -519,7 +519,11 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 			}
 		}
 
-		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
+		// Read saved playback position for resume
+		posKey := player.MakePosKey(animeTitle, episodeNum)
+		startPos := player.ReadPosition(posKey)
+
+		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality, startPos)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
 		}
@@ -621,7 +625,7 @@ func parseQualityNum(q string) int {
 	return n
 }
 
-func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval, quality string) *source.Stream {
+func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval, quality string, startPos float64) *source.Stream {
 	d := &player.Detector{}
 
 	filtered := filterByQuality(streams, quality)
@@ -646,6 +650,8 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skip
 		})
 	}
 
+	posKey := player.MakePosKey(animeTitle, episodeNum)
+
 	for _, s := range ordered {
 		url := s.URL
 		if strings.HasPrefix(url, "//") {
@@ -657,6 +663,8 @@ func tryPlayStream(streams []*source.Stream, animeTitle, episodeNum string, skip
 			Title:     fmt.Sprintf("%s - Episode %s", animeTitle, episodeNum),
 			Referrer:  s.Referer,
 			SkipTimes: playerSkips,
+			StartPos:  startPos,
+			PosKey:    posKey,
 		}
 		for _, sub := range s.Subtitles {
 			opts.Subtitles = append(opts.Subtitles, sub.URL)

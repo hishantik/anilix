@@ -25,6 +25,7 @@ type Entry struct {
 	Type         string    `json:"type,omitempty"`
 	Year         int       `json:"year,omitempty"`
 	EpisodeCount int       `json:"episode_count,omitempty"`
+	Position     float64   `json:"position,omitempty"` // playback position in seconds (0 = start from beginning)
 }
 
 // History manages play history persistence.

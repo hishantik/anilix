@@ -15,6 +15,9 @@ import (
 //go:embed ani-skip.lua
 var aniSkipLuaScript string
 
+//go:embed pos-save.lua
+var posSaveLuaScript string
+
 type Player struct {
 	Name string
 }
@@ -31,6 +34,8 @@ type Options struct {
 	Subtitles  []string
 	Referrer   string
 	SkipTimes  []SkipInterval
+	StartPos   float64 // resume position in seconds (0 = start from beginning)
+	PosKey     string  // key for persisting playback position (e.g. "anime_title_ep_11")
 }
 
 var (
@@ -150,11 +155,28 @@ func (p *Player) mpvArgs(url string, opts Options) []string {
 		args = append(args, "--referrer="+opts.Referrer)
 	}
 
+	// Resume from saved playback position if available
+	if opts.StartPos > 0 {
+		args = append(args, fmt.Sprintf("--start=%.1f", opts.StartPos))
+	}
+
+	// Save playback position on quit so it can be restored next time
+	args = append(args, "--save-position-on-quit")
+
 	if len(opts.SkipTimes) > 0 {
 		scriptPath := ensureSkipScript()
 		if scriptPath != "" {
 			args = append(args, "--script="+scriptPath)
 			args = append(args, "--script-opts=ani_skip_times="+formatSkipOpts(opts.SkipTimes))
+		}
+	}
+
+	// Attach position-save script for resume functionality
+	if opts.PosKey != "" {
+		posScriptPath := ensurePosSaveScript()
+		if posScriptPath != "" {
+			args = append(args, "--script="+posScriptPath)
+			args = append(args, "--script-opts=ani_pos_key="+opts.PosKey)
 		}
 	}
 
@@ -186,6 +208,72 @@ func ensureSkipScript() string {
 		return ""
 	}
 	return path
+}
+
+// ensurePosSaveScript writes the bundled position-save Lua script to
+// ~/.anilix/pos-save.lua if it doesn't already exist.
+func ensurePosSaveScript() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[anilix] cannot resolve home dir for pos-save script: %v\n", err)
+		return ""
+	}
+	dir := filepath.Join(home, ".anilix")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[anilix] failed to create anilix dir: %v\n", err)
+		return ""
+	}
+
+	path := filepath.Join(dir, "pos-save.lua")
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+
+	if err := os.WriteFile(path, []byte(posSaveLuaScript), 0644); err != nil {
+		log.Printf("[anilix] failed to write pos-save script: %v\n", err)
+		return ""
+	}
+	return path
+}
+
+// ReadPosition reads the saved playback position for a given key.
+// Returns the position in seconds, or 0 if no saved position exists.
+func ReadPosition(key string) float64 {
+	if key == "" {
+		return 0
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	path := filepath.Join(home, ".anilix", "watch-progress", key+".pos")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var pos float64
+	if _, err := fmt.Sscanf(string(data), "%f", &pos); err != nil {
+		return 0
+	}
+	return pos
+}
+
+// MakePosKey creates a sanitized key for persisting playback position.
+func MakePosKey(animeTitle, episodeNum string) string {
+	key := strings.ToLower(animeTitle)
+	// Replace spaces and special characters with underscores
+	var b strings.Builder
+	for _, c := range key {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else if c == ' ' || c == '-' {
+			b.WriteRune('_')
+		}
+		// skip other characters
+	}
+	b.WriteString("_ep_")
+	b.WriteString(episodeNum)
+	return b.String()
 }
 
 // formatSkipOpts encodes skip intervals into mpv script-opts format.
