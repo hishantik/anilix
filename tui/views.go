@@ -441,7 +441,11 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 
 	// Episode section header + list
 	epCount := len(m.episodeState.Episodes)
-	epHeader := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render(
+	epHeaderStyle := lipgloss.NewStyle().Foreground(Theme.Faint)
+	if m.episodeState.FocusRegion == RegionEpisodes {
+		epHeaderStyle = lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true)
+	}
+	epHeader := epHeaderStyle.Render(
 		fmt.Sprintf("\u2501\u2501 Episodes (%d) \u2501\u2501", epCount))
 
 	if m.episodeState.Loading {
@@ -560,7 +564,11 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 
 	// Episodes
 	epCount := len(m.episodeState.Episodes)
-	epHeader := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render(
+	epHeaderStyle := lipgloss.NewStyle().Foreground(Theme.Faint)
+	if m.episodeState.FocusRegion == RegionEpisodes {
+		epHeaderStyle = lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true)
+	}
+	epHeader := epHeaderStyle.Render(
 		fmt.Sprintf("\u2501\u2501 Episodes (%d) \u2501\u2501", epCount))
 
 	if m.episodeState.Loading {
@@ -1034,8 +1042,13 @@ func (m *SearchModel) hasHistory() bool {
 func (m *SearchModel) renderRecommendationsSection(width int) string {
 	recState := m.episodeState
 
-	// Section header
-	header := lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true).Render("\u2501\u2501 Recommended \u2501\u2501")
+	// Section header — bold when this region is focused, dim otherwise.
+	headerFocused := recState.FocusRegion == RegionRecs
+	headerStyle := lipgloss.NewStyle().Foreground(Theme.Faint)
+	if headerFocused {
+		headerStyle = lipgloss.NewStyle().Foreground(Theme.Primary).Bold(true)
+	}
+	header := headerStyle.Render("\u2501\u2501 Recommended \u2501\u2501")
 
 	if recState.RecLoading {
 		msg := lipgloss.JoinHorizontal(lipgloss.Center, m.loading.View(), " Loading recommendations...")
@@ -1046,16 +1059,9 @@ func (m *SearchModel) renderRecommendationsSection(width int) string {
 		return header + "\n" + lipgloss.NewStyle().Foreground(Theme.Faint).Render("   No recommendations available.")
 	}
 
-	// Card layout — same as home screen
-	cardWidth := 26
-	cardsPerRow := (width - 4) / cardWidth
-	if cardsPerRow < 1 {
-		cardsPerRow = 1
-	}
-	if cardsPerRow > 6 {
-		cardsPerRow = 6
-	}
-	cardWidth = (width - 4) / cardsPerRow
+	// Card layout — same math as the home screen, shared helper.
+	cardsPerRow := recsPerRow(width)
+	cardWidth := (width - 4) / cardsPerRow
 
 	// Determine visible slice
 	start := 0
@@ -1071,7 +1077,7 @@ func (m *SearchModel) renderRecommendationsSection(width int) string {
 	var cards []string
 	for i, item := range visibleItems {
 		globalIdx := start + i
-		isSelected := recState.RecFocus && globalIdx == recState.RecSelected
+		isSelected := headerFocused && globalIdx == recState.RecSelected
 		card := m.renderHomeCard(item, cardWidth, isSelected)
 		cards = append(cards, card)
 	}

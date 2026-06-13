@@ -655,6 +655,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// j/Tab/down moves focus to episode list
 				if msg.String() == "tab" || msg.String() == "j" || msg.String() == "down" {
 					m.episodeState.ResumeFocus = false
+					m.episodeState.FocusRegion = RegionEpisodes
+					return m, nil
+				}
+				// Shift+Tab from resume goes back to episodes; cycling further wraps to Recs
+				// (handled by the up/k branch only since Shift+Tab has a special string form).
+				if msg.String() == "shift+tab" {
+					m.episodeState.ResumeFocus = false
+					m.episodeState.FocusRegion = RegionEpisodes
 					return m, nil
 				}
 				// Consume up/k while resume card is focused (top item, nowhere to go up)
@@ -662,6 +670,54 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				// Consume other keys while resume card is focused (don't pass to episode list)
+				return m, nil
+			}
+			// Recommendations focus: h/l/j/k navigate, Tab/Shift+Tab cycle regions.
+			if m.episodeState.FocusRegion == RegionRecs && len(m.episodeState.RecItems) > 0 {
+				cpr := recsPerRow(m.width)
+				switch msg.String() {
+				case "h", "left":
+					if m.episodeState.RecSelected > 0 {
+						m.episodeState.RecSelected--
+					}
+					return m, nil
+				case "l", "right":
+					if m.episodeState.RecSelected < len(m.episodeState.RecItems)-1 {
+						m.episodeState.RecSelected++
+					}
+					return m, nil
+				case "k", "up":
+					if m.episodeState.RecSelected-cpr >= 0 {
+						m.episodeState.RecSelected -= cpr
+					} else {
+						// Top row — hand off to episode list (keep list cursor where it is).
+						m.episodeState.FocusRegion = RegionEpisodes
+						m.episodeState.ResumeFocus = false
+					}
+					return m, nil
+				case "j", "down":
+					if m.episodeState.RecSelected+cpr < len(m.episodeState.RecItems) {
+						m.episodeState.RecSelected += cpr
+					}
+					return m, nil
+				case "tab":
+					// Recs → Resume (if available) → Episodes → Recs
+					if m.episodeState.ResumeEpisode > 0 {
+						m.episodeState.FocusRegion = RegionResume
+						m.episodeState.ResumeFocus = true
+					} else {
+						m.episodeState.FocusRegion = RegionEpisodes
+						m.episodeState.ResumeFocus = false
+					}
+					return m, nil
+				case "shift+tab":
+					m.episodeState.FocusRegion = RegionEpisodes
+					m.episodeState.ResumeFocus = false
+					return m, nil
+				case "enter":
+					return m, openRecItem(m)
+				}
+				// Consume other keys while recs are focused
 				return m, nil
 			}
 			if msg.String() >= "0" && msg.String() <= "9" {
@@ -673,14 +729,41 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterEpisodesByNumber(m.textInput.Value())
 				return m, tea.Batch(cmds...)
 			}
+			// Tab from the episode list cycles forward to Recs (skip Resume if absent)
+			if msg.String() == "tab" {
+				m.episodeState.FocusRegion = RegionRecs
+				m.episodeState.ResumeFocus = false
+				return m, nil
+			}
+			// Shift+Tab from episode list goes back to Resume if available
+			if msg.String() == "shift+tab" {
+				if m.episodeState.ResumeEpisode > 0 {
+					m.episodeState.FocusRegion = RegionResume
+					m.episodeState.ResumeFocus = true
+				}
+				return m, nil
+			}
 			// Navigate back up to resume card when at top of episode list
 			if (msg.String() == "up" || msg.String() == "k") && m.episodeList.Index() == 0 && m.episodeState.ResumeEpisode > 0 {
 				m.episodeState.ResumeFocus = true
+				m.episodeState.FocusRegion = RegionResume
 				return m, nil
 			}
+			prevIdx := m.episodeList.Index()
 			var cmd tea.Cmd
 			m.episodeList, cmd = m.episodeList.Update(msg)
 			cmds = append(cmds, cmd)
+			// Bottom-of-list handoff: when the user moves down past the last visible item
+			// (or already at the end and presses down/j), hand focus to Recs.
+			if (msg.String() == "down" || msg.String() == "j") &&
+				m.episodeList.Index() == prevIdx &&
+				prevIdx == len(m.episodeState.Episodes)-1 &&
+				len(m.episodeState.RecItems) > 0 {
+				m.episodeState.FocusRegion = RegionRecs
+				m.episodeState.ResumeFocus = false
+				m.episodeState.RecSelected = 0
+				return m, tea.Batch(cmds...)
+			}
 			if m.episodeList.Index() != m.prevEpisodeListIndex {
 				m.prevEpisodeListIndex = m.episodeList.Index()
 				m.episodeState.Selected = m.episodeList.Index()
@@ -877,6 +960,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeState.RecItems = msg.Items
 		m.episodeState.RecLoading = false
 		m.episodeState.RecErr = msg.Err
+		// Clamp RecSelected to a valid index when recs arrive; don't yank focus
+		// region itself — the user may be navigating elsewhere at this moment.
+		if m.episodeState.RecSelected >= len(msg.Items) {
+			m.episodeState.RecSelected = 0
+		}
 
 	case AniListLoginMsg:
 		m.state = settingsState
@@ -959,30 +1047,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case HomeItemResolvedMsg:
-		anime := msg.Anime
-		m.searchState.Results = []*source.Anime{anime}
-		m.searchState.Selected = 0
-		m.prevState = homeState
-		m.state = detailState
-		m.textInput.Placeholder = "Search episode..."
-		m.episodeState.Loading = true
-		m.episodeState.AnimeID = anime.AllAnimeID
-		m.progressPercent = 0
-		m.progressTarget = 0.4
-		// Compute resume episode from history (AniList progress overrides later)
-		m.computeResumeEpisode()
-		m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
-		cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
-		// Fetch metadata if not already populated by selectHomeItem
-		if m.searchState.Metadata == nil && anime.AniListID > 0 {
-			cmds = append(cmds, m.fetchMetadata())
-		}
-		if anime.AniListID > 0 {
-			cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
-		}
-		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-			return progressTickMsg{}
-		}))
+		cmds = append(cmds, m.enterDetail(msg.Anime)...)
 
 	case PlayStreamMsg:
 		m.episodeState.Playing = false
@@ -1187,6 +1252,71 @@ func (m *SearchModel) GetSelectedAnime() *source.Anime {
 		return m.searchState.Results[m.searchState.Selected]
 	}
 	return nil
+}
+
+// enterDetail transitions the UI from a home/rec-card selection into the
+// detail state for the given anime. It mirrors the work originally done by
+// the HomeItemResolvedMsg case so the same commands fire whether the entry
+// point was the home grid or a recommendation card on the detail page.
+func (m *SearchModel) enterDetail(anime *source.Anime) []tea.Cmd {
+	m.searchState.Results = []*source.Anime{anime}
+	m.searchState.Selected = 0
+	m.prevState = homeState
+	m.state = detailState
+	m.textInput.Placeholder = "Search episode..."
+	m.episodeState.Loading = true
+	m.episodeState.AnimeID = anime.AllAnimeID
+	m.episodeState.FocusRegion = RegionEpisodes // reset focus to episode list
+	m.progressPercent = 0
+	m.progressTarget = 0.4
+	// Compute resume episode from history (AniList progress overrides later)
+	m.computeResumeEpisode()
+	m.episodeState.ResumeFocus = m.episodeState.ResumeEpisode > 0
+
+	var cmds []tea.Cmd
+	cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
+	if m.searchState.Metadata == nil && anime.AniListID > 0 {
+		cmds = append(cmds, m.fetchMetadata())
+	}
+	if anime.AniListID > 0 {
+		cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
+	}
+	cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		return progressTickMsg{}
+	}))
+	return cmds
+}
+
+// openRecItem activates the currently-focused recommendation card, mirroring the
+// home-grid selection flow. If the rec already has an AllAnimeID, it dispatches
+// straight into the detail state. Otherwise it kicks off a name-search to
+// resolve the AllAnimeID asynchronously and falls back into HomeItemResolvedMsg.
+func openRecItem(m *SearchModel) tea.Cmd {
+	if m.episodeState.RecSelected < 0 || m.episodeState.RecSelected >= len(m.episodeState.RecItems) {
+		return nil
+	}
+	rec := m.episodeState.RecItems[m.episodeState.RecSelected]
+
+	// Synthesize a *source.Anime from the rec card. MALID is unknown until we
+	// resolve through AllAnime; if the rec payload already carries one, forward it.
+	anime := &source.Anime{
+		Name:       rec.Name,
+		MALID:      rec.MALID,
+		AniListID:  rec.AniListID,
+		AllAnimeID: rec.AllAnimeID,
+		Cover:      rec.Cover,
+		Genres:     rec.Genres,
+		Type:       rec.Type,
+		Year:       rec.Year,
+	}
+
+	// Mirror selectHomeItem's logic: AllAnimeID present → enterDetail directly,
+	// otherwise resolve via AllAnime search after the user explicitly picked the card.
+	if anime.AllAnimeID != "" {
+		cmds := m.enterDetail(anime)
+		return tea.Batch(cmds...)
+	}
+	return resolveHomeItemAllAnimeID(anime, m.allanimeClient, m.searchState.TranslationType)
 }
 
 func RunSearch() (*SelectionResult, error) {

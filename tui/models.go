@@ -74,7 +74,16 @@ type EpisodeState struct {
 	RecFocus    bool        // keyboard focus on recommendation cards
 	RecLoading  bool
 	RecErr      error
+	FocusRegion int         // 0 = Episodes, 1 = Resume, 2 = Recs (see FocusRegionXxx constants below)
 }
+
+// FocusRegion numeric values for EpisodeState.FocusRegion. RegionEpisodes is
+// the zero value so a freshly-built EpisodeState defaults to the episode list.
+const (
+	RegionEpisodes = iota
+	RegionResume
+	RegionRecs
+)
 
 // EpisodeMetadataPanel holds metadata for a single episode
 type EpisodeMetadataPanel struct {

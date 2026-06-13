@@ -15,7 +15,25 @@ import (
 const (
 	// Fixed card dimensions — every card uses exactly these.
 	cardHeight = 5 // lines: title + rating + genre + 2 blank rows
+	// Preferred card width before clamping — used to compute cardsPerRow.
+	preferredCardWidth = 26
+	// Hard cap on cards-per-row, matches the home-screen grid layout.
+	maxCardsPerRow = 6
 )
+
+// recsPerRow computes how many recommendation cards fit per row at the given
+// available width. Shared by the detail-page recs renderer and the keyboard
+// navigation dispatch so j/k row math matches what the user sees on screen.
+func recsPerRow(width int) int {
+	cards := (width - 4) / preferredCardWidth
+	if cards < 1 {
+		return 1
+	}
+	if cards > maxCardsPerRow {
+		return maxCardsPerRow
+	}
+	return cards
+}
 
 // HomeItem represents a single anime on the home screen.
 type HomeItem struct {
@@ -88,14 +106,8 @@ func (m *SearchModel) viewHomeState() string {
 
 	// Card dimensions — full width, no panel
 	gridW := m.width
+	cardsPerRow := recsPerRow(gridW)
 	cardWidth := 26
-	cardsPerRow := (gridW - 4) / cardWidth
-	if cardsPerRow < 1 {
-		cardsPerRow = 1
-	}
-	if cardsPerRow > 6 {
-		cardsPerRow = 6
-	}
 	cardWidth = (gridW - 4) / cardsPerRow
 
 	var lines []string
