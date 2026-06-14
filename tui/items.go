@@ -130,6 +130,7 @@ func makeSearchList(km keymap) list.Model {
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{km.Toggle, km.Settings}
 	}
+	l.Help.Styles = styledHelpStyles()
 	return l
 }
 
@@ -164,5 +165,6 @@ func makeEpisodeList(km keymap) list.Model {
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{km.Toggle, km.Settings}
 	}
+	l.Help.Styles = styledHelpStyles()
 	return l
 }

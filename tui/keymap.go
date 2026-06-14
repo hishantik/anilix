@@ -1,6 +1,24 @@
 package tui
 
-import "charm.land/bubbles/v2/key"
+import (
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
+)
+
+// styledHelpStyles returns the canonical help styles used by every help bar
+// in the TUI (including the help bar embedded in list.Model). Keeping them in
+// one place ensures the home helpbar matches the search/detail helpbar.
+func styledHelpStyles() help.Styles {
+	hs := help.DefaultStyles(true)
+	hs.ShortKey = lipgloss.NewStyle().Foreground(Theme.Primary)
+	hs.ShortDesc = lipgloss.NewStyle().Foreground(Theme.Faint)
+	hs.FullKey = lipgloss.NewStyle().Foreground(Theme.Primary)
+	hs.FullDesc = lipgloss.NewStyle().Foreground(Theme.Faint)
+	hs.ShortSeparator = lipgloss.NewStyle().Foreground(Theme.Faint)
+	hs.FullSeparator = lipgloss.NewStyle().Foreground(Theme.Faint)
+	return hs
+}
 
 type keymap struct {
 	Up         key.Binding
@@ -12,6 +30,8 @@ type keymap struct {
 	Search     key.Binding
 	Settings   key.Binding
 	Resume     key.Binding
+	NextRegion key.Binding
+	PrevRegion key.Binding
 	ConfirmYes key.Binding
 	ConfirmNo  key.Binding
 }
@@ -54,6 +74,14 @@ func newKeymap() keymap {
 			key.WithKeys("r"),
 			key.WithHelp("r", "resume watching"),
 		),
+		NextRegion: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "next section"),
+		),
+		PrevRegion: key.NewBinding(
+			key.WithKeys("shift+tab"),
+			key.WithHelp("shift+tab", "prev section"),
+		),
 		ConfirmYes: key.NewBinding(
 			key.WithKeys("y", "enter"),
 			key.WithHelp("y/enter", "yes"),
@@ -71,104 +99,8 @@ func (k keymap) ShortHelp() []key.Binding {
 
 func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Select},
-		{k.Back, k.Quit, k.Toggle, k.Settings},
+		{k.Up, k.Down, k.Select, k.Search},
+		{k.Back, k.Quit, k.Toggle, k.Settings, k.Resume},
+		{k.NextRegion, k.PrevRegion},
 	}
-}
-
-type confirmKeymap struct {
-	Yes key.Binding
-	No  key.Binding
-}
-
-func (k confirmKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Yes, k.No}
-}
-
-func (k confirmKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Yes, k.No}}
-}
-
-type settingsKeymap struct {
-	Up    key.Binding
-	Down  key.Binding
-	Left  key.Binding
-	Right key.Binding
-	Enter key.Binding
-	Close key.Binding
-}
-
-func (k settingsKeymap) ShortHelp() []key.Binding {
-	bindings := []key.Binding{k.Up, k.Down}
-	if k.Left.Keys() != nil {
-		bindings = append(bindings, k.Left)
-	}
-	if k.Right.Keys() != nil {
-		bindings = append(bindings, k.Right)
-	}
-	if k.Enter.Keys() != nil {
-		bindings = append(bindings, k.Enter)
-	}
-	bindings = append(bindings, k.Close)
-	return bindings
-}
-
-func (k settingsKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{k.ShortHelp()}
-}
-
-type homeKeymap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Left     key.Binding
-	Right    key.Binding
-	Select   key.Binding
-	Search   key.Binding
-	Settings key.Binding
-	Quit     key.Binding
-}
-
-func newHomeKeymap() homeKeymap {
-	return homeKeymap{
-		Up: key.NewBinding(
-			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "section"),
-		),
-		Down: key.NewBinding(
-			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "section"),
-		),
-		Left: key.NewBinding(
-			key.WithKeys("left", "h"),
-			key.WithHelp("←/h", "left"),
-		),
-		Right: key.NewBinding(
-			key.WithKeys("right", "l"),
-			key.WithHelp("→/l", "right"),
-		),
-		Select: key.NewBinding(
-			key.WithKeys("enter"),
-			key.WithHelp("enter", "select"),
-		),
-		Search: key.NewBinding(
-			key.WithKeys("/"),
-			key.WithHelp("/", "search"),
-		),
-		Settings: key.NewBinding(
-			key.WithKeys("ctrl+s"),
-			key.WithHelp("ctrl+s", "settings"),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("ctrl+c"),
-			key.WithHelp("ctrl+c", "quit"),
-		),
-	}
-}
-
-func (k homeKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Select, k.Search, k.Settings, k.Quit}
-}
-
-func (k homeKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{k.ShortHelp()}
 }

@@ -7,8 +7,7 @@ import (
 	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/version"
 
-	"charm.land/bubbles/v2/key"
-	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -840,32 +839,13 @@ func (m *SearchModel) renderChrome(content string) string {
 		chromeLines += 2 // back + blank
 	}
 
-	// Help bar — only for states without a list (confirm quit, settings, home)
-	// searchState/detailState use the list's built-in help bar
+	// Unified help bar — identical on every state via m.keymap.
+	// searchState/detailState render the same keymap via the list's built-in helper.
 	var helpView string
 	var helpBox string
 	helpHeight := 0
-	if m.state == homeState {
-		helpView = m.help.View(newHomeKeymap())
-		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)
-		helpHeight = 1
-	} else if m.state == confirmQuitState {
-		helpView = m.help.View(confirmKeymap{m.keymap.ConfirmYes, m.keymap.ConfirmNo})
-		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)
-		helpHeight = 1
-	} else if m.state == settingsState {
-		sHelp := settingsKeymap{
-			Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("\u2191/k", "up")),
-			Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("\u2193/j", "down")),
-			Close: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
-		}
-		if m.settingsState.Cursor <= 1 {
-			sHelp.Left = key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("\u2190/h", "decrease"))
-			sHelp.Right = key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("\u2192/l", "increase"))
-		} else {
-			sHelp.Enter = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select"))
-		}
-		helpView = m.help.View(sHelp)
+	if m.state != searchState && m.state != detailState {
+		helpView = m.help.View(m.keymap)
 		helpBox = lipgloss.NewStyle().Foreground(Theme.Faint).Render(helpView)
 		helpHeight = 1
 	}
