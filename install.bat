@@ -10,8 +10,17 @@ set "INSTALL_DIR=%LOCALAPPDATA%\anilix"
 set "BASE_URL=https://github.com/%REPO%/releases/download"
 set "API_URL=https://api.github.com/repos/%REPO%/releases/latest"
 
-:: Generate ESC character for ANSI codes (Windows 10+)
-for /f "delims=" %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
+:: Enable Virtual Terminal Processing for ANSI colors (Windows 10+)
+for /f "tokens=3" %%a in ('reg query "HKCU\Console" /v VirtualTerminalLevel 2^>nul') do set "VTL=%%a"
+if not "!VTL!"=="1" (
+    reg add "HKCU\Console" /v VirtualTerminalLevel /t REG_DWORD /d 1 /f >nul 2>&1
+)
+
+:: Generate ESC character for ANSI codes using PowerShell (more reliable than cmd)
+for /f "delims=" %%a in ('powershell -NoProfile -Command "Write-Host ([char]27)"') do set "ESC=%%a"
+
+:: Fallback if ESC generation failed
+if "!ESC!"=="" set "ESC="
 
 :: ANSI color codes matching Anilix theme
 set "C_BLUE=%ESC%[0;34m"
