@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/hishantik/anilix/source"
 )
+
+const allAnimeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0"
 
 const (
 	BaseURL    = "https://api.allanime.day/api"
@@ -259,7 +262,7 @@ func (c *AllanimeClient) doGraphQLHTTP(ctx context.Context, reqBody []byte) ([]b
 
 func (c *AllanimeClient) doGraphQLCurl(ctx context.Context, reqBody []byte) ([]byte, error) {
 	// Use Firefox user-agent like ani-cli
-	agent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
+	agent := allAnimeUserAgent
 
 	// Try persisted query first (ani-cli approach) - ONLY for episode sources
 	persistedResp, err := c.doGraphQLCurlPersisted(ctx, reqBody, agent)
@@ -338,23 +341,10 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 		episodeString = ep
 	}
 
-	encodedVars := fmt.Sprintf(`{"showId":"%s","translationType":"%s","episodeString":"%s"}`,
-		showId, translationType, episodeString)
-	encodedVars = strings.ReplaceAll(encodedVars, `"`, "%22")
-	encodedVars = strings.ReplaceAll(encodedVars, `:`, "%3A")
-	encodedVars = strings.ReplaceAll(encodedVars, `{`, "%7B")
-	encodedVars = strings.ReplaceAll(encodedVars, `}`, "%7D")
-	encodedVars = strings.ReplaceAll(encodedVars, `,`, "%2C")
-
-	encodedExt := `{"persistedQuery":{"version":1,"sha256Hash":"` + queryHash + `"}}`
-	encodedExt = strings.ReplaceAll(encodedExt, `"`, "%22")
-	encodedExt = strings.ReplaceAll(encodedExt, `:`, "%3A")
-	encodedExt = strings.ReplaceAll(encodedExt, `{`, "%7B")
-	encodedExt = strings.ReplaceAll(encodedExt, `}`, "%7D")
-	encodedExt = strings.ReplaceAll(encodedExt, `,`, "%2C")
-	encodedExt = strings.ReplaceAll(encodedExt, ` `, "%20")
-
-	apiURL := c.baseURL + "?variables=" + encodedVars + "&extensions=" + encodedExt
+	apiURL, err := buildEpisodeRequestURL(c.baseURL, showId, translationType, episodeString, queryHash)
+	if err != nil {
+		return nil, err
+	}
 
 	// Try with different referer (ani-cli uses youtu-chan.com first)
 	referers := []string{
@@ -396,6 +386,32 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 	}
 
 	return nil, fmt.Errorf("persisted query failed")
+}
+
+func buildEpisodeRequestURL(baseURL, showID, translationType, episodeString, queryHash string) (string, error) {
+	variables, err := json.Marshal(map[string]string{
+		"showId":          showID,
+		"translationType": translationType,
+		"episodeString":   episodeString,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to encode episode variables: %w", err)
+	}
+
+	extensions, err := json.Marshal(map[string]interface{}{
+		"persistedQuery": map[string]interface{}{
+			"version":    1,
+			"sha256Hash": queryHash,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to encode episode extensions: %w", err)
+	}
+
+	values := url.Values{}
+	values.Set("variables", string(variables))
+	values.Set("extensions", string(extensions))
+	return baseURL + "?" + values.Encode(), nil
 }
 
 // Map AllAnime show to source.Anime
