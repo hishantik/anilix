@@ -1,17 +1,21 @@
 package tui
 
 import (
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hishantik/anilix/auth"
+	appbrowser "github.com/hishantik/anilix/browser"
 	"github.com/hishantik/anilix/config"
-	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/miruro"
 	"github.com/hishantik/anilix/source"
 	"github.com/hishantik/anilix/update"
 	"github.com/hishantik/anilix/version"
@@ -41,10 +45,10 @@ type SearchModel struct {
 	searchList  list.Model
 	episodeList list.Model
 
-	allanimeClient   *allanime.AllanimeClient
-	jikanClient      *jikan.JikanClient
-	anilistClient    *anilist.Client
-	allanimeProvider *allanime.AllanimeProvider
+	jikanClient    *jikan.JikanClient
+	anilistClient  *anilist.Client
+	miruroProvider *miruro.Provider
+	openBrowser    func(string) error
 
 	prevState     tuiState
 	confirmSelect int
@@ -96,8 +100,10 @@ func NewSearchModel() *SearchModel {
 	if translationType == "" {
 		translationType = "sub"
 	}
-	allanimeProvider := allanime.NewAllanimeProvider()
-	allanimeProvider.SetTranslation(translationType)
+	home, _ := os.UserHomeDir()
+	transport, _ := miruro.NewDefaultTransport(filepath.Join(home, ".anilix", "miruro-browser"))
+	miruroProvider := miruro.NewProvider(miruro.NewClient(transport), nil)
+	miruroProvider.SetTranslation(translationType)
 
 	h := help.New()
 	hs := help.DefaultStyles(true)
@@ -117,9 +123,9 @@ func NewSearchModel() *SearchModel {
 	p.SetWidth(40)
 
 	return &SearchModel{
-		state:            searchState,
-		searchState:      NewSearchState(),
-		episodeState:     NewEpisodeState(),
+		state:        searchState,
+		searchState:  NewSearchState(),
+		episodeState: NewEpisodeState(),
 		settingsState: &SettingsState{
 			Quality: func() string {
 				q := config.GetString("quality")
@@ -137,10 +143,10 @@ func NewSearchModel() *SearchModel {
 		progress:             p,
 		searchList:           makeSearchList(km),
 		episodeList:          makeEpisodeList(km),
-		allanimeClient:       allanime.NewAllanimeClient(),
 		jikanClient:          jikan.NewClient("https://api.jikan.moe/v4"),
 		anilistClient:        anilist.NewClient(),
-		allanimeProvider:     allanimeProvider,
+		miruroProvider:       miruroProvider,
+		openBrowser:          appbrowser.Open,
 		lastQuery:            "",
 		metadataCache:        make(map[int]*MetadataPanel),
 		episodeTitlesCache:   make(map[int][]string),
@@ -154,6 +160,12 @@ func NewSearchModel() *SearchModel {
 
 func (m *SearchModel) Init() tea.Cmd {
 	return nil
+}
+
+func (m *SearchModel) close() {
+	if m.miruroProvider != nil {
+		_ = m.miruroProvider.Close()
+	}
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -184,6 +196,12 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.state == detailState && m.episodeState.BrowserURL != "" && key.Matches(msg, m.keymap.Open) {
+			if err := m.openBrowser(m.episodeState.BrowserURL); err != nil {
+				m.episodeState.Err = fmt.Errorf("open Miruro: %w", err)
+			}
+			return m, nil
+		}
 		if m.state == searchState && m.textInput.Focused() {
 			switch {
 			case key.Matches(msg, m.keymap.Quit):
@@ -416,13 +434,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			config.Set("translation_type", m.searchState.TranslationType)
 
-			if m.state == detailState && m.episodeState.AnimeID != "" {
+			if m.state == detailState && m.episodeState.AniListID > 0 {
 				m.episodeState.Loading = true
 				m.progressPercent = 0
 				m.progressTarget = 0.4
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
-					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
+					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AniListID, selectedAnime.MALID))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -447,14 +465,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Selected = m.searchList.Index()
 				if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
 					anime := m.searchState.Results[m.searchState.Selected]
-					if anime.AllAnimeID != "" {
+					if anime.AniListID > 0 {
 						m.state = detailState
 						m.textInput.Placeholder = "Search episode..."
-						m.episodeState.AnimeID = anime.AllAnimeID
+						m.episodeState.AniListID = anime.AniListID
+						m.episodeState.BrowserURL = ""
 						m.episodeState.Loading = true
 						m.progressPercent = 0
 						m.progressTarget = 0.4
-						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
+						cmds = append(cmds, m.fetchEpisodes(anime.AniListID, anime.MALID))
 						cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
 						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 							return progressTickMsg{}
@@ -467,9 +486,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selectedAnime := m.searchState.Results[m.searchState.Selected]
 					selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
 					m.episodeState.Playing = true
+					m.episodeState.BrowserURL = ""
 					m.progressPercent = 0
 					m.progressTarget = 0.5
-					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name, selectedAnime.MALID))
+					cmds = append(cmds, m.playEpisode(selectedAnime.AniListID, selectedEpisode, selectedAnime.Name, selectedAnime.MALID))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -767,6 +787,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
 		m.progress.SetWidth(m.width)
 		m.episodeState.Err = msg.Err
+		m.episodeState.BrowserURL = msg.BrowserURL
 	}
 
 	return m, tea.Batch(cmds...)
@@ -888,6 +909,7 @@ func (m *SearchModel) GetSelectedAnime() *source.Anime {
 
 func RunSearch() (*SelectionResult, error) {
 	model := NewSearchModel()
+	defer model.close()
 	p := tea.NewProgram(model)
 
 	_, err := p.Run()

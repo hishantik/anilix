@@ -35,7 +35,7 @@
 | **Interactive TUI** — Two-column search layout with instant metadata preview and detail view with episode browser, built on Bubble Tea v2 | **Smart Search** — Fast anime search with automatic metadata fetching and fallback sources |
 | **Batch Metadata** — Fetches all search result metadata in a single call for instant j/k navigation without per-item requests | **Quality Selection** — Cycle through presets: best → 1080p → 720p → 480p → 360p → auto, via settings popup |
 | **Sub/Dub Toggle** — Switch between subtitled and dubbed versions with `Ctrl+T` | **Auto-Skip Intro/Outro** — Automatically skips intros and outros with mpv Lua script for seamless seeking |
-| **Recent Searches** — Persists your last 10 searches for quick access | **Multi-host Extraction** — Extracts direct streams from multiple hosts with automatic fallback |
+| **Recent Searches** — Persists your last 10 searches for quick access | **Miruro Streams** — Resolves direct streams through Miruro providers with automatic fallback |
 | **Android Proxy** — Local HTTP proxy bridges Android apps and PRoot/Termux for seamless stream playback on mobile | **Persistent Caching** — SQLite-backed ID mapping for fast repeated lookups |
 | **AniList Tracking** — OAuth2 login to sync watch progress and status with your AniList account, connect/disconnect from the TUI settings menu | **Cover Art** — Renders anime cover images directly in the terminal using Kitty graphics or half-block Unicode placeholders |
 | **Self-Update** — Check for and install updates directly from the TUI settings menu (`Ctrl+S` → Update) without leaving the app | |
@@ -107,6 +107,10 @@
   <tr>
     <td align="center"><code>Ctrl+S</code></td>
     <td align="center">Open settings popup</td>
+  </tr>
+  <tr>
+    <td align="center"><code>o</code></td>
+    <td align="center">Open the episode on Miruro when native playback is unavailable</td>
   </tr>
   <tr>
     <td align="center"><code>Ctrl+C</code></td>

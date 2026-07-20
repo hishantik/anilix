@@ -45,6 +45,7 @@ func (a *AniListProvider) mapToAnime(data *MediaData) *source.Anime {
 		Name:         data.Title.English,
 		URL:          data.SiteURL,
 		AniListID:    data.ID,
+		MALID:        data.IDMal,
 		Status:       data.Status,
 		EpisodeCount: data.Episodes,
 		Type:         data.Format,

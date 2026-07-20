@@ -55,17 +55,18 @@ type MetadataPanel struct {
 
 // EpisodeState holds the state for episode selection
 type EpisodeState struct {
-	AnimeID           string
-	Episodes          []string
-	EpisodeTitles     []string
-	Selected          int
-	Loading           bool
-	Err               error
-	EpisodeMetadata   *EpisodeMetadataPanel
-	MetadataLoading   bool
-	Playing           bool
-	TrackingStatus    string // "CURRENT", "COMPLETED", etc.
-	TrackingProgress  int
+	AniListID        int
+	BrowserURL       string
+	Episodes         []string
+	EpisodeTitles    []string
+	Selected         int
+	Loading          bool
+	Err              error
+	EpisodeMetadata  *EpisodeMetadataPanel
+	MetadataLoading  bool
+	Playing          bool
+	TrackingStatus   string // "CURRENT", "COMPLETED", etc.
+	TrackingProgress int
 }
 
 // EpisodeMetadataPanel holds metadata for a single episode
@@ -93,12 +94,12 @@ type SettingsState struct {
 // NewSearchState creates a new search state
 func NewSearchState() *SearchState {
 	return &SearchState{
-		Query:           "",
-		Results:         nil,
-		Selected:        0,
-		Metadata:        nil,
-		Loading:         false,
-		Err:             nil,
+		Query:    "",
+		Results:  nil,
+		Selected: 0,
+		Metadata: nil,
+		Loading:  false,
+		Err:      nil,
 		TranslationType: func() string {
 			t := config.GetString("translation_type")
 			if t == "" {

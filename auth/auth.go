@@ -8,11 +8,10 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/hishantik/anilix/browser"
 	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/curl"
 	"github.com/hishantik/anilix/provider/anilist"
@@ -55,7 +54,7 @@ func Login() error {
 	)
 
 	infoPrintln("Opening browser for AniList login...")
-	if err := openBrowser(authURL); err != nil {
+	if err := browser.Open(authURL); err != nil {
 		info("Could not open browser automatically.\nPlease open this URL manually:\n\n  %s\n\n", authURL)
 	}
 
@@ -263,25 +262,4 @@ func readLine() string {
 		return scanner.Text()
 	}
 	return ""
-}
-
-func openBrowser(url string) error {
-	switch runtime.GOOS {
-	case "android":
-		if err := exec.Command("termux-open-url", url).Start(); err == nil {
-			return nil
-		}
-		if err := exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", url).Start(); err == nil {
-			return nil
-		}
-		return fmt.Errorf("no browser opener found")
-	case "linux":
-		return exec.Command("xdg-open", url).Start()
-	case "darwin":
-		return exec.Command("open", url).Start()
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
 }

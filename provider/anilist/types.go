@@ -33,27 +33,28 @@ type BatchMediaResponse struct {
 // Media data from AniList
 
 type MediaData struct {
-	ID          int          `json:"id"`
-	Title       Title        `json:"title"`
-	CoverImage  CoverImage   `json:"coverImage"`
-	Type        string       `json:"type"`
-	Format      string       `json:"format"`
-	Status      string       `json:"status"`
-	Description string       `json:"description"`
-	StartDate   FuzzyDate    `json:"startDate"`
-	EndDate     FuzzyDate    `json:"endDate"`
-	Season      string       `json:"season"`
-	SeasonYear  int          `json:"seasonYear"`
-	Episodes    int          `json:"episodes"`
-	Duration    int          `json:"duration"`
-	Genres      []string     `json:"genres"`
-	Synonyms    []string     `json:"synonyms"`
-	AverageScore int         `json:"averageScore"`
-	MeanScore   int          `json:"meanScore"`
-	Popularity  int          `json:"popularity"`
-	Trending    int          `json:"trending"`
-	Favourites  int          `json:"favourites"`
-	SiteURL     string       `json:"siteUrl"`
+	ID           int        `json:"id"`
+	IDMal        int        `json:"idMal"`
+	Title        Title      `json:"title"`
+	CoverImage   CoverImage `json:"coverImage"`
+	Type         string     `json:"type"`
+	Format       string     `json:"format"`
+	Status       string     `json:"status"`
+	Description  string     `json:"description"`
+	StartDate    FuzzyDate  `json:"startDate"`
+	EndDate      FuzzyDate  `json:"endDate"`
+	Season       string     `json:"season"`
+	SeasonYear   int        `json:"seasonYear"`
+	Episodes     int        `json:"episodes"`
+	Duration     int        `json:"duration"`
+	Genres       []string   `json:"genres"`
+	Synonyms     []string   `json:"synonyms"`
+	AverageScore int        `json:"averageScore"`
+	MeanScore    int        `json:"meanScore"`
+	Popularity   int        `json:"popularity"`
+	Trending     int        `json:"trending"`
+	Favourites   int        `json:"favourites"`
+	SiteURL      string     `json:"siteUrl"`
 }
 
 type Title struct {

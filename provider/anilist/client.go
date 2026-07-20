@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	BaseURL    = "https://graphql.anilist.co"
-	RateLimit  = 10 // requests per second (AniList is generous)
-	UserAgent  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	BaseURL   = "https://graphql.anilist.co"
+	RateLimit = 10 // requests per second (AniList is generous)
+	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
 
 type Client struct {
@@ -275,6 +275,7 @@ func (c *Client) SearchAnime(ctx context.Context, query string, limit int) ([]Me
 		Page(page: 1, perPage: $perPage) {
 			media(search: $search, type: ANIME, sort: [SEARCH_MATCH]) {
 				id
+				idMal
 				title { romaji english native userPreferred }
 				coverImage { extraLarge large medium }
 				type

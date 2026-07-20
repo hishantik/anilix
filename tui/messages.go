@@ -56,7 +56,8 @@ type EpisodeMetadataLoadedMsg struct {
 type PlayStreamMsg struct{}
 
 type TUIErrorMsg struct {
-	Err error
+	Err        error
+	BrowserURL string
 }
 
 type progressTickMsg struct{}

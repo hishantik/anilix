@@ -428,9 +428,9 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	if meta.TitleNative != "" {
 		fixedLines++
 	}
-	fixedLines += 3            // separators + blank lines
+	fixedLines += 3 // separators + blank lines
 	fixedLines += synopsisLines
-	fixedLines += 3            // second separator + blanks
+	fixedLines += 3                          // second separator + blanks
 	episodeHeight := height - fixedLines - 8 // chrome reservation
 	if episodeHeight < 5 {
 		episodeHeight = 5
@@ -465,6 +465,9 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 		lines = append(lines, m.episodeList.View())
 	} else if m.episodeState.Err != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))
+		if m.episodeState.BrowserURL != "" {
+			lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Press o to open this episode on Miruro"))
+		}
 	} else {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("No episodes found"))
 	}
@@ -576,6 +579,9 @@ func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) s
 		lines = append(lines, m.episodeList.View())
 	} else if m.episodeState.Err != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Error).Render(fmt.Sprintf("Error: %v", m.episodeState.Err)))
+		if m.episodeState.BrowserURL != "" {
+			lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("Press o to open this episode on Miruro"))
+		}
 	} else {
 		lines = append(lines, lipgloss.NewStyle().Foreground(Theme.Faint).Render("No episodes found"))
 	}

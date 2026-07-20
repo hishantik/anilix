@@ -15,6 +15,7 @@ import (
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/miruro"
 	"github.com/hishantik/anilix/source"
 	"github.com/hishantik/anilix/update"
 
@@ -22,25 +23,12 @@ import (
 )
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
-	translationType := m.searchState.TranslationType
-	if translationType == "" {
-		translationType = "sub"
-	}
-	allanimeClient := m.allanimeClient
+	provider := m.miruroProvider
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		shows, err := allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
+		results, err := provider.Search(query)
 		if err != nil {
 			return SearchErrorMsg{Err: err}
-		}
-
-		results := make([]*source.Anime, 0, len(shows))
-		for _, show := range shows {
-			anime := allanimeClient.MapToAnime(&show)
-			results = append(results, anime)
 		}
 
 		queryLower := strings.ToLower(query)
@@ -60,8 +48,8 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 	// Collect all AniList IDs with their result index
 	type indexID struct {
-		Index      int
-		AniListID  int
+		Index     int
+		AniListID int
 	}
 	var pairs []indexID
 	for i, r := range results {
@@ -302,8 +290,8 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 			batch := anilistIDs[i:batchEnd]
 			batchCtx, batchCancel := context.WithTimeout(ctx, 10*time.Second)
 			if _, err := anilistClient.GetAnimeBatch(batchCtx, batch); err != nil && ctx.Err() == nil {
-			log.Printf("[anilix] prefetch batch failed: %v\n", err)
-		}
+				log.Printf("[anilix] prefetch batch failed: %v\n", err)
+			}
 			batchCancel()
 		}
 	}
@@ -369,30 +357,29 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 
 }
 
-func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
+func (m *SearchModel) fetchEpisodes(anilistID int, malID int) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
 	searchSelected := m.searchState.Selected
-	allanimeClient := m.allanimeClient
+	provider := m.miruroProvider
 	jikanClient := m.jikanClient
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		episodes, err := allanimeClient.GetShowEpisodes(ctx, showID, translationType)
+		provider.SetTranslation(translationType)
+		episodes, err := provider.EpisodesOf(&source.Anime{AniListID: anilistID}, 1)
 		if err != nil {
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
-
-		epList, ok := episodes[translationType]
-		if !ok {
-			epList, ok = episodes["sub"]
-			if !ok {
-				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: fmt.Errorf("no episodes found for %s", translationType)}
-			}
+		epList := make([]string, 0, len(episodes))
+		nativeTitles := make([]string, 0, len(episodes))
+		for _, episode := range episodes {
+			epList = append(epList, strconv.FormatFloat(episode.Number, 'f', -1, 64))
+			nativeTitles = append(nativeTitles, episode.Title)
 		}
 
 		m.episodeTitlesCacheMu.Lock()
@@ -409,6 +396,9 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 					episodeTitles[i] = ep.Title
 				}
 			}
+		}
+		if len(episodeTitles) == 0 {
+			episodeTitles = nativeTitles
 		}
 
 		return EpisodesLoadedMsg{Episodes: epList, EpisodeTitles: episodeTitles, Error: nil}
@@ -481,34 +471,35 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 	}
 }
 
-func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID int) tea.Cmd {
+func (m *SearchModel) playEpisode(anilistID int, episodeNum, animeTitle string, malID int) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
-	allanimeProvider := m.allanimeProvider
+	provider := m.miruroProvider
 	aniskipEnabled := m.settingsState.AniskipEnabled
 	quality := m.settingsState.Quality
 
 	return func() tea.Msg {
-		allanimeProvider.SetTranslation(translationType)
+		provider.SetTranslation(translationType)
+		fallbackURL := miruro.WatchURL(anilistID, animeTitle)
 
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
 		episode := &source.Episode{
 			Number: episodeNumFloat,
 			Anime: &source.Anime{
-				AllAnimeID: showID,
-				Name:       animeTitle,
+				AniListID: anilistID,
+				Name:      animeTitle,
 			},
 		}
 
-		streams, err := allanimeProvider.StreamsOf(episode)
+		streams, err := provider.StreamsOf(episode)
 		if err != nil {
-			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
+			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err), BrowserURL: fallbackURL}
 		}
 
 		if len(streams) == 0 {
-			return TUIErrorMsg{Err: fmt.Errorf("no streams found")}
+			return TUIErrorMsg{Err: fmt.Errorf("no streams found"), BrowserURL: fallbackURL}
 		}
 
 		var skipTimes []aniskip.SkipInterval
@@ -521,7 +512,7 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 
 		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
 		if playStream == nil {
-			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
+			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found"), BrowserURL: fallbackURL}
 		}
 
 		return PlayStreamMsg{}

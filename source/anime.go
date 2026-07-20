@@ -11,7 +11,6 @@ type Anime struct {
 	Status       string
 	MALID        int    // MyAnimeList ID for metadata linkage
 	AniListID    int    // AniList ID for metadata linkage
-	AllAnimeID   string // AllAnime show ID for episode/streams
 	EpisodeCount int    // Total episode count
 	Type         string // "TV", "Movie", "OVA", etc.
 	Rating       string // "PG-13 - Teens 13 or older"
