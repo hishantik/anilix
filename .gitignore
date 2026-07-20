@@ -12,3 +12,6 @@ anilix
 
 #Debug
 *.debug
+
+# Local feature worktrees
+.worktrees/
