@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hishantik/anilix/source"
 )
 
 func TestIntegrationCatalogAndPlayableSource(t *testing.T) {
@@ -19,9 +21,11 @@ func TestIntegrationCatalogAndPlayableSource(t *testing.T) {
 	}
 	defer transport.Close()
 	client := NewClient(transport)
+	provider := NewProvider(client, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	catalogStarted := time.Now()
 	catalog, err := client.Catalog(ctx, 20)
 	if err != nil {
 		t.Fatalf("Catalog: %v", err)
@@ -30,16 +34,22 @@ func TestIntegrationCatalogAndPlayableSource(t *testing.T) {
 	if len(candidates) == 0 {
 		t.Fatal("Naruto episode 1 has no Miruro candidates")
 	}
+	t.Logf("catalog resolved in %s", time.Since(catalogStarted).Round(time.Millisecond))
 
 	var lastErr error
-	for _, candidate := range candidates {
-		streams, err := client.Sources(ctx, candidate)
+	lazyCandidates, err := provider.CandidateStreams(&source.Episode{Number: 1, Anime: &source.Anime{AniListID: 20}})
+	if err != nil {
+		t.Fatalf("CandidateStreams: %v", err)
+	}
+	for _, candidate := range lazyCandidates {
+		started := time.Now()
+		streams, err := candidate.Resolve()
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		if len(streams) > 0 {
-			t.Logf("resolved %d stream(s) through %s", len(streams), candidate.Provider)
+			t.Logf("resolved %d stream(s) through %s in %s", len(streams), candidate.Provider, time.Since(started).Round(time.Millisecond))
 			return
 		}
 	}
