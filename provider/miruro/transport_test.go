@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestHTTPTransportRotatesMirrorsAfterForbidden(t *testing.T) {
@@ -44,6 +46,68 @@ func TestHTTPTransportRotatesMirrorsAfterForbidden(t *testing.T) {
 	}
 	if string(body) != `{"providers":{}}` {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestHTTPTransportReturnsFastMirrorWithoutWaitingForSlowMirror(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer fast.Close()
+
+	transport := NewHTTPTransport(http.DefaultClient, []string{slow.URL, fast.URL})
+	started := time.Now()
+	if _, err := transport.Get(context.Background(), "config", nil); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Get took %s, want under 1s", elapsed)
+	}
+}
+
+func TestHTTPTransportPrefersLastSuccessfulMirror(t *testing.T) {
+	var loserCalls atomic.Int32
+	loser := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loserCalls.Add(1)
+		http.Error(w, "unavailable", http.StatusBadGateway)
+	}))
+	defer loser.Close()
+	winner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer winner.Close()
+
+	transport := NewHTTPTransport(http.DefaultClient, []string{loser.URL, winner.URL})
+	if _, err := transport.Get(context.Background(), "config", nil); err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	firstLoserCalls := loserCalls.Load()
+	if _, err := transport.Get(context.Background(), "config", nil); err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if got := loserCalls.Load(); got != firstLoserCalls {
+		t.Fatalf("loser calls = %d, want unchanged at %d", got, firstLoserCalls)
+	}
+}
+
+func TestHTTPTransportPreservesAccessDeniedWhenAllMirrorsDeny(t *testing.T) {
+	denied := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "denied", http.StatusForbidden)
+		}))
+	}
+	first, second := denied(), denied()
+	defer first.Close()
+	defer second.Close()
+
+	transport := NewHTTPTransport(http.DefaultClient, []string{first.URL, second.URL})
+	_, err := transport.Get(context.Background(), "config", nil)
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("error = %v, want ErrAccessDenied", err)
 	}
 }
 

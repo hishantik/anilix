@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,8 +45,16 @@ func (t errorTransport) Get(context.Context, string, url.Values) ([]byte, error)
 func (errorTransport) Close() error { return nil }
 
 type HTTPTransport struct {
-	client  *http.Client
-	origins []string
+	client          *http.Client
+	origins         []string
+	mu              sync.RWMutex
+	preferredOrigin string
+}
+
+type mirrorResult struct {
+	origin string
+	body   []byte
+	err    error
 }
 
 func NewHTTPTransport(client *http.Client, origins []string) *HTTPTransport {
@@ -62,25 +71,101 @@ func (t *HTTPTransport) Get(ctx context.Context, path string, query url.Values) 
 		return nil, err
 	}
 
-	var lastErr error
-	denied := false
-	for _, origin := range t.origins {
-		body, err := t.getOrigin(ctx, strings.TrimRight(origin, "/"), encoded)
-		if err == nil {
-			return body, nil
+	origins := t.orderedOrigins()
+	if len(origins) == 0 {
+		return nil, errors.New("no Miruro mirrors configured")
+	}
+
+	raceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan mirrorResult, len(origins))
+	launch := func(origin string) {
+		go func() {
+			attemptCtx, attemptCancel := context.WithTimeout(raceCtx, 5*time.Second)
+			defer attemptCancel()
+			body, err := t.getOrigin(attemptCtx, strings.TrimRight(origin, "/"), encoded)
+			results <- mirrorResult{origin: origin, body: body, err: err}
+		}()
+	}
+
+	launched := 0
+	launch(origins[0])
+	launched++
+	if t.preferred() != "" && len(origins) > 1 {
+		timer := time.NewTimer(75 * time.Millisecond)
+		select {
+		case first := <-results:
+			timer.Stop()
+			if first.err == nil {
+				t.setPreferred(first.origin)
+				return first.body, nil
+			}
+			for _, origin := range origins[1:] {
+				launch(origin)
+				launched++
+			}
+			return t.collectMirrorResults(ctx, results, launched-1, []error{first.err})
+		case <-timer.C:
+			for _, origin := range origins[1:] {
+				launch(origin)
+				launched++
+			}
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
 		}
-		if errors.Is(err, ErrAccessDenied) {
-			denied = true
+	} else {
+		for _, origin := range origins[1:] {
+			launch(origin)
+			launched++
 		}
-		lastErr = err
 	}
-	if denied {
-		return nil, fmt.Errorf("%w on all Miruro mirrors", ErrAccessDenied)
+	return t.collectMirrorResults(ctx, results, launched, nil)
+}
+
+func (t *HTTPTransport) collectMirrorResults(ctx context.Context, results <-chan mirrorResult, count int, failures []error) ([]byte, error) {
+	for i := 0; i < count; i++ {
+		select {
+		case result := <-results:
+			if result.err == nil {
+				t.setPreferred(result.origin)
+				return result.body, nil
+			}
+			failures = append(failures, result.err)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	if lastErr == nil {
-		lastErr = errors.New("no Miruro mirrors configured")
+	joined := errors.Join(failures...)
+	if errors.Is(joined, ErrAccessDenied) {
+		return nil, fmt.Errorf("%w on Miruro mirrors: %v", ErrAccessDenied, joined)
 	}
-	return nil, lastErr
+	return nil, joined
+}
+
+func (t *HTTPTransport) preferred() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.preferredOrigin
+}
+
+func (t *HTTPTransport) setPreferred(origin string) {
+	t.mu.Lock()
+	t.preferredOrigin = origin
+	t.mu.Unlock()
+}
+
+func (t *HTTPTransport) orderedOrigins() []string {
+	origins := append([]string(nil), t.origins...)
+	preferred := t.preferred()
+	for i, origin := range origins {
+		if origin == preferred {
+			copy(origins[1:i+1], origins[0:i])
+			origins[0] = preferred
+			break
+		}
+	}
+	return origins
 }
 
 func (t *HTTPTransport) getOrigin(ctx context.Context, origin, encoded string) ([]byte, error) {
