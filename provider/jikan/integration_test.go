@@ -1,12 +1,13 @@
 package jikan
 
 import (
+	"os"
 	"testing"
 )
 
 func TestIntegration_JikanSearch(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	if os.Getenv("JIKAN_INTEGRATION") == "" {
+		t.Skip("set JIKAN_INTEGRATION=1 to contact Jikan")
 	}
 
 	jp := NewJikanProvider()

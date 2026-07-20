@@ -1,6 +1,7 @@
 package jikan
 
 import (
+	"os"
 	"testing"
 
 	"github.com/hishantik/anilix/source"
@@ -25,6 +26,9 @@ func TestJikanProvider_ID(t *testing.T) {
 }
 
 func TestJikanProvider_Search(t *testing.T) {
+	if os.Getenv("JIKAN_INTEGRATION") == "" {
+		t.Skip("set JIKAN_INTEGRATION=1 to contact Jikan")
+	}
 	jp := NewJikanProvider()
 
 	results, err := jp.Search("Naruto")

@@ -36,4 +36,4 @@ The live Miruro smoke test is opt-in:
 MIRURO_INTEGRATION=1 go test ./provider/miruro -run TestIntegration -count=1 -v
 ```
 
-Some legacy Jikan tests call the public network and can fail because of connectivity or rate limits; use focused deterministic package tests when working offline.
+Live Jikan checks are also opt-in with `JIKAN_INTEGRATION=1`; the default suite is deterministic and works offline.
