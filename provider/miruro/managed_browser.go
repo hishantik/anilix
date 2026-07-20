@@ -91,11 +91,10 @@ func (f *managedBrowserFetcher) ensureStarted(origin string) error {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(f.executable),
 		chromedp.UserDataDir(f.profileDir),
-		chromedp.Flag("headless", false),
-		chromedp.Flag("disable-background-networking", true),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
 	)
+	for name, value := range managedBrowserFlags() {
+		opts = append(opts, chromedp.Flag(name, value))
+	}
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	browserCtx, ctxCancel := chromedp.NewContext(allocCtx)
 	f.allocCancel = allocCancel
@@ -106,10 +105,19 @@ func (f *managedBrowserFetcher) ensureStarted(origin string) error {
 	defer cancel()
 	if err := chromedp.Run(startCtx, chromedp.Navigate(origin), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 		f.Close()
-		return fmt.Errorf("start Miruro browser (complete any visible verification): %w", err)
+		return fmt.Errorf("start headless Miruro browser: %w", err)
 	}
 	f.origin = origin
 	return nil
+}
+
+func managedBrowserFlags() map[string]any {
+	return map[string]any{
+		"headless":                      true,
+		"disable-background-networking": true,
+		"no-first-run":                  true,
+		"no-default-browser-check":      true,
+	}
 }
 
 func (f *managedBrowserFetcher) Close() error {

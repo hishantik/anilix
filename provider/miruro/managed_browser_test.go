@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestManagedBrowserFlagsUseHeadlessMode(t *testing.T) {
+	flags := managedBrowserFlags()
+	if headless, ok := flags["headless"].(bool); !ok || !headless {
+		t.Fatalf("headless flag = %#v, want true", flags["headless"])
+	}
+}
+
 func TestBrowserExecutableCandidatesWindowsIncludesChromeAndEdge(t *testing.T) {
 	candidates := browserExecutableCandidates("windows", `C:\Program Files`, `C:\Program Files (x86)`, `C:\Users\Test\AppData\Local`)
 	joined := strings.ToLower(strings.Join(candidates, "\n"))
