@@ -1,8 +1,17 @@
 package player
 
 import (
+	"errors"
 	"testing"
 )
+
+func TestDesktopLaunchReturnsPlayerExitError(t *testing.T) {
+	want := errors.New("decoder rejected stream")
+	player := &Player{Name: "mpv", run: func(string, ...string) error { return want }}
+	if err := player.Launch("https://example.com/video.m3u8", Options{}); !errors.Is(err, want) {
+		t.Fatalf("Launch error = %v, want %v", err, want)
+	}
+}
 
 func TestPlayerString(t *testing.T) {
 	tests := []struct {

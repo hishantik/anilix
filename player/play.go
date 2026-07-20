@@ -17,6 +17,7 @@ var aniSkipLuaScript string
 
 type Player struct {
 	Name string
+	run  func(string, ...string) error
 }
 
 // SkipInterval represents a skip segment (intro/outro) from AniSkip.
@@ -27,10 +28,10 @@ type SkipInterval struct {
 }
 
 type Options struct {
-	Title      string
-	Subtitles  []string
-	Referrer   string
-	SkipTimes  []SkipInterval
+	Title     string
+	Subtitles []string
+	Referrer  string
+	SkipTimes []SkipInterval
 }
 
 var (
@@ -103,7 +104,13 @@ func (p *Player) Launch(url string, opts Options) error {
 		}
 		return nil
 	}
-	return exec.Command(p.Name, args...).Start()
+	run := p.run
+	if run == nil {
+		run = func(name string, args ...string) error {
+			return exec.Command(name, args...).Run()
+		}
+	}
+	return run(p.Name, args...)
 }
 
 // removeFlag removes a flag and its N following values from args.

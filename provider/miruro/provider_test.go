@@ -39,3 +39,19 @@ func TestProviderRejectsAnimeWithoutAniListID(t *testing.T) {
 		t.Fatal("EpisodesOf succeeded without AniList ID")
 	}
 }
+
+func TestProviderReturnsStreamsFromEveryCandidateForPlayerFallback(t *testing.T) {
+	transport := &routeTransport{routes: map[string][]byte{
+		"episodes":     []byte(`{"providers":{"bonk":{"episodes":{"sub":[{"id":"bonk-1","number":1}]}},"ally":{"episodes":{"sub":[{"id":"ally-1","number":1}]}}}}`),
+		"sources:bonk": []byte(`{"streams":[{"url":"https://custom.example/episode.m3u8"}]}`),
+		"sources:ally": []byte(`{"streams":[{"url":"https://native.example/episode.m3u8"}]}`),
+	}}
+	provider := NewProvider(NewClient(transport), nil)
+	streams, err := provider.StreamsOf(&source.Episode{Number: 1, Anime: &source.Anime{AniListID: 20}})
+	if err != nil {
+		t.Fatalf("StreamsOf: %v", err)
+	}
+	if len(streams) != 2 || streams[0].Provider != "bonk" || streams[1].Provider != "ally" {
+		t.Fatalf("streams = %+v, want bonk then ally", streams)
+	}
+}

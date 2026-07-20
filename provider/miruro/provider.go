@@ -102,14 +102,19 @@ func (p *Provider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) 
 		return nil, fmt.Errorf("Miruro has no %s source candidates for episode %s", translation, number)
 	}
 	var failures []error
+	var resolved []*source.Stream
 	for _, candidate := range candidates {
 		streams, err := p.client.Sources(ctx, candidate)
 		if err == nil && len(streams) > 0 {
-			return streams, nil
+			resolved = append(resolved, streams...)
+			continue
 		}
 		if err != nil {
 			failures = append(failures, err)
 		}
+	}
+	if len(resolved) > 0 {
+		return resolved, nil
 	}
 	return nil, fmt.Errorf("no playable Miruro source for episode %s: %v", number, failures)
 }

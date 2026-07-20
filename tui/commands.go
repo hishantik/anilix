@@ -519,7 +519,7 @@ func (m *SearchModel) playEpisode(anilistID int, episodeNum, animeTitle string, 
 	}
 }
 
-// updateTrackingCmd fires a fire-and-forget tracking update after playback starts.
+// updateTrackingCmd updates tracking after desktop playback exits successfully.
 func (m *SearchModel) updateTrackingCmd(anilistID, episodeNum, totalEpisodes int) tea.Cmd {
 	token := m.anilistToken
 	if token == "" || anilistID == 0 {
