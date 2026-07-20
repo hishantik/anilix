@@ -8,16 +8,40 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const pipePath = "/api/secure/pipe"
 
 var ErrAccessDenied = errors.New("Miruro access denied")
 
+var OfficialOrigins = []string{
+	"https://www.miruro.tv",
+	"https://www.miruro.to",
+	"https://www.miruro.bz",
+	"https://www.miruro.ru",
+}
+
 type Transport interface {
 	Get(ctx context.Context, path string, query url.Values) ([]byte, error)
 	Close() error
 }
+
+func NewDefaultTransport(profileDir string) (Transport, error) {
+	primary := NewHTTPTransport(&http.Client{Timeout: 20 * time.Second}, OfficialOrigins)
+	browser, err := NewManagedBrowserTransport(profileDir, OfficialOrigins)
+	if err != nil {
+		browser = errorTransport{err: err}
+	}
+	return NewFallbackTransport(primary, browser), nil
+}
+
+type errorTransport struct{ err error }
+
+func (t errorTransport) Get(context.Context, string, url.Values) ([]byte, error) {
+	return nil, t.err
+}
+func (errorTransport) Close() error { return nil }
 
 type HTTPTransport struct {
 	client  *http.Client
