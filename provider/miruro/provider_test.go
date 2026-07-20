@@ -1,6 +1,7 @@
 package miruro
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/hishantik/anilix/source"
@@ -33,6 +34,28 @@ func TestProviderEpisodesAndStreamsUseAniListIdentity(t *testing.T) {
 	}
 }
 
+func TestCandidateStreamsAreLazyAndPreferSuccessfulProviderThenAlly(t *testing.T) {
+	transport := &routeTransport{routes: map[string][]byte{
+		"episodes": []byte(`{"providers":{"bonk":{"episodes":{"sub":[{"id":"bonk-1","number":1}]}},"ally":{"episodes":{"sub":[{"id":"ally-1","number":1}]}},"kiwi":{"episodes":{"sub":[{"id":"kiwi-1","number":1}]}}}}`),
+	}}
+	provider := NewProvider(NewClient(transport), nil)
+	provider.MarkSuccessfulProvider("kiwi")
+	candidates, err := provider.CandidateStreams(&source.Episode{Number: 1, Anime: &source.Anime{AniListID: 20}})
+	if err != nil {
+		t.Fatalf("CandidateStreams: %v", err)
+	}
+	var names []string
+	for _, candidate := range candidates {
+		names = append(names, candidate.Provider)
+	}
+	if !slices.Equal(names, []string{"kiwi", "ally", "bonk"}) {
+		t.Fatalf("candidate order = %v", names)
+	}
+	if slices.Contains(transport.calls, "sources:kiwi") || slices.Contains(transport.calls, "sources:ally") {
+		t.Fatalf("constructing candidates resolved sources: %v", transport.calls)
+	}
+}
+
 func TestProviderRejectsAnimeWithoutAniListID(t *testing.T) {
 	provider := NewProvider(NewClient(&routeTransport{}), nil)
 	if _, err := provider.EpisodesOf(&source.Anime{Name: "Unknown"}, 1); err == nil {
@@ -51,7 +74,7 @@ func TestProviderReturnsStreamsFromEveryCandidateForPlayerFallback(t *testing.T)
 	if err != nil {
 		t.Fatalf("StreamsOf: %v", err)
 	}
-	if len(streams) != 2 || streams[0].Provider != "bonk" || streams[1].Provider != "ally" {
-		t.Fatalf("streams = %+v, want bonk then ally", streams)
+	if len(streams) != 2 || streams[0].Provider != "ally" || streams[1].Provider != "bonk" {
+		t.Fatalf("streams = %+v, want ally then bonk", streams)
 	}
 }

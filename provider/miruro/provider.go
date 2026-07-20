@@ -20,8 +20,14 @@ type Provider struct {
 	client   *Client
 	searcher animeSearcher
 
-	mu          sync.RWMutex
-	translation string
+	mu                 sync.RWMutex
+	translation        string
+	successfulProvider string
+}
+
+type StreamCandidate struct {
+	Provider string
+	Resolve  func() ([]*source.Stream, error)
 }
 
 func NewProvider(client *Client, searcher animeSearcher) *Provider {
@@ -84,6 +90,29 @@ func (p *Provider) EpisodesOf(anime *source.Anime, season int) ([]*source.Episod
 }
 
 func (p *Provider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) {
+	candidates, err := p.CandidateStreams(episode)
+	if err != nil {
+		return nil, err
+	}
+	var failures []error
+	var resolved []*source.Stream
+	for _, candidate := range candidates {
+		streams, err := candidate.Resolve()
+		if err == nil && len(streams) > 0 {
+			resolved = append(resolved, streams...)
+			continue
+		}
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if len(resolved) > 0 {
+		return resolved, nil
+	}
+	return nil, fmt.Errorf("no playable Miruro source: %v", failures)
+}
+
+func (p *Provider) CandidateStreams(episode *source.Episode) ([]StreamCandidate, error) {
 	if episode == nil || episode.Anime == nil || episode.Anime.AniListID <= 0 {
 		return nil, fmt.Errorf("episode has no anime or AniList ID")
 	}
@@ -101,22 +130,55 @@ func (p *Provider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) 
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("Miruro has no %s source candidates for episode %s", translation, number)
 	}
-	var failures []error
-	var resolved []*source.Stream
+	ordered := orderEpisodeCandidates(candidates, p.PreferredProvider())
+	result := make([]StreamCandidate, 0, len(ordered))
+	for _, candidate := range ordered {
+		candidate := candidate
+		result = append(result, StreamCandidate{
+			Provider: candidate.Provider,
+			Resolve: func() ([]*source.Stream, error) {
+				resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer resolveCancel()
+				return p.client.Sources(resolveCtx, candidate)
+			},
+		})
+	}
+	return result, nil
+}
+
+func orderEpisodeCandidates(candidates []EpisodeCandidate, preferred string) []EpisodeCandidate {
+	byProvider := make(map[string]EpisodeCandidate, len(candidates))
 	for _, candidate := range candidates {
-		streams, err := p.client.Sources(ctx, candidate)
-		if err == nil && len(streams) > 0 {
-			resolved = append(resolved, streams...)
-			continue
-		}
-		if err != nil {
-			failures = append(failures, err)
+		if _, exists := byProvider[candidate.Provider]; !exists {
+			byProvider[candidate.Provider] = candidate
 		}
 	}
-	if len(resolved) > 0 {
-		return resolved, nil
+	ordered := make([]EpisodeCandidate, 0, len(byProvider))
+	for _, name := range []string{preferred, "ally"} {
+		if candidate, ok := byProvider[name]; ok {
+			ordered = append(ordered, candidate)
+			delete(byProvider, name)
+		}
 	}
-	return nil, fmt.Errorf("no playable Miruro source for episode %s: %v", number, failures)
+	for _, candidate := range candidates {
+		if remaining, ok := byProvider[candidate.Provider]; ok {
+			ordered = append(ordered, remaining)
+			delete(byProvider, candidate.Provider)
+		}
+	}
+	return ordered
+}
+
+func (p *Provider) MarkSuccessfulProvider(name string) {
+	p.mu.Lock()
+	p.successfulProvider = name
+	p.mu.Unlock()
+}
+
+func (p *Provider) PreferredProvider() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.successfulProvider
 }
 
 func (p *Provider) SetTranslation(translation string) {

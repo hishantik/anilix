@@ -2,11 +2,47 @@ package tui
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/hishantik/anilix/aniskip"
+	"github.com/hishantik/anilix/provider/miruro"
+	"github.com/hishantik/anilix/source"
 )
+
+func TestTryMiruroCandidatesResolvesLazilyUntilPlayerSucceeds(t *testing.T) {
+	var resolved []string
+	candidates := []miruro.StreamCandidate{
+		{Provider: "bonk", Resolve: func() ([]*source.Stream, error) {
+			resolved = append(resolved, "bonk")
+			return []*source.Stream{{Provider: "bonk", URL: "https://bad.example/video.m3u8"}}, nil
+		}},
+		{Provider: "ally", Resolve: func() ([]*source.Stream, error) {
+			resolved = append(resolved, "ally")
+			return []*source.Stream{{Provider: "ally", URL: "https://good.example/video.m3u8"}}, nil
+		}},
+		{Provider: "kiwi", Resolve: func() ([]*source.Stream, error) {
+			resolved = append(resolved, "kiwi")
+			return []*source.Stream{{Provider: "kiwi", URL: "https://unused.example/video.m3u8"}}, nil
+		}},
+	}
+	play := func(streams []*source.Stream, _, _ string, _ []aniskip.SkipInterval, _ string) *source.Stream {
+		if streams[0].Provider == "ally" {
+			return streams[0]
+		}
+		return nil
+	}
+
+	provider, failures := tryMiruroCandidates(candidates, "Naruto", "1", nil, "auto", play)
+	if provider != "ally" || len(failures) != 1 {
+		t.Fatalf("provider=%q failures=%v", provider, failures)
+	}
+	if !slices.Equal(resolved, []string{"bonk", "ally"}) {
+		t.Fatalf("resolved = %v", resolved)
+	}
+}
 
 func TestMiruroPlaybackErrorOffersBrowserFallback(t *testing.T) {
 	model := NewSearchModel()

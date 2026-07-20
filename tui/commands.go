@@ -493,13 +493,9 @@ func (m *SearchModel) playEpisode(anilistID int, episodeNum, animeTitle string, 
 			},
 		}
 
-		streams, err := provider.StreamsOf(episode)
+		candidates, err := provider.CandidateStreams(episode)
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err), BrowserURL: fallbackURL}
-		}
-
-		if len(streams) == 0 {
-			return TUIErrorMsg{Err: fmt.Errorf("no streams found"), BrowserURL: fallbackURL}
 		}
 
 		var skipTimes []aniskip.SkipInterval
@@ -510,13 +506,36 @@ func (m *SearchModel) playEpisode(anilistID int, episodeNum, animeTitle string, 
 			}
 		}
 
-		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
-		if playStream == nil {
-			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found"), BrowserURL: fallbackURL}
+		providerName, failures := tryMiruroCandidates(candidates, animeTitle, episodeNum, skipTimes, quality, tryPlayStream)
+		if providerName == "" {
+			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found: %v", failures), BrowserURL: fallbackURL}
 		}
+		provider.MarkSuccessfulProvider(providerName)
 
 		return PlayStreamMsg{}
 	}
+}
+
+type streamPlayer func([]*source.Stream, string, string, []aniskip.SkipInterval, string) *source.Stream
+
+func tryMiruroCandidates(candidates []miruro.StreamCandidate, animeTitle, episodeNum string, skipTimes []aniskip.SkipInterval, quality string, play streamPlayer) (string, []error) {
+	var failures []error
+	for _, candidate := range candidates {
+		streams, err := candidate.Resolve()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", candidate.Provider, err))
+			continue
+		}
+		if len(streams) == 0 {
+			failures = append(failures, fmt.Errorf("%s: no streams", candidate.Provider))
+			continue
+		}
+		if play(streams, animeTitle, episodeNum, skipTimes, quality) != nil {
+			return candidate.Provider, failures
+		}
+		failures = append(failures, fmt.Errorf("%s: player rejected streams", candidate.Provider))
+	}
+	return "", failures
 }
 
 // updateTrackingCmd updates tracking after desktop playback exits successfully.
