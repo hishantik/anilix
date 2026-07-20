@@ -33,7 +33,7 @@ var fixedProviders = []struct {
 func isFixedProvider(sourceName string) (string, bool) {
 	name := strings.ToLower(sourceName)
 	name = strings.ReplaceAll(name, " ", "")
-	
+
 	for _, fp := range fixedProviders {
 		for _, marker := range fp.markers {
 			if name == marker {
@@ -112,10 +112,10 @@ func (a *AllanimeProvider) EpisodesOf(anime *source.Anime, season int) ([]*sourc
 	for _, epNum := range epList {
 		num, _ := strconv.ParseFloat(epNum, 64)
 		ep := &source.Episode{
-			Number:  num,
-			URL:     fmt.Sprintf("https://allmanga.to/watch/%s/%s", anime.AllAnimeID, epNum),
-			Anime:   anime,
-			Season:  season,
+			Number: num,
+			URL:    fmt.Sprintf("https://allmanga.to/watch/%s/%s", anime.AllAnimeID, epNum),
+			Anime:  anime,
+			Season: season,
 		}
 		episodes = append(episodes, ep)
 	}
@@ -170,7 +170,7 @@ func (a *AllanimeProvider) StreamsOf(episode *source.Episode) ([]*source.Stream,
 	case result := <-resultCh:
 		// Got streams! Collect any other quick results
 		allStreams := result.streams
-		
+
 		// Briefly wait for more results (500ms)
 		timeout := time.After(500 * time.Millisecond)
 		for {
@@ -289,9 +289,9 @@ func extractStreams(ctx context.Context, src SourceUrl) []*source.Stream {
 // ani-cli fetches https://allanime.day/apivtwo/clock?id=... and extracts the link
 func extractClockURL(ctx context.Context, clockPath, providerName string) []*source.Stream {
 	// Build full URL
-	clockURL := clockPath
+	clockURL := fixClockPath(clockPath)
 	if !strings.HasPrefix(clockPath, "http") {
-		clockURL = "https://allanime.day" + clockPath
+		clockURL = "https://allanime.day" + fixClockPath(clockPath)
 	}
 
 	headers := map[string]string{
@@ -304,36 +304,54 @@ func extractClockURL(ctx context.Context, clockPath, providerName string) []*sou
 		return nil
 	}
 
-	// Parse JSON response to extract link
-	var resp struct {
-		Link string `json:"link"`
-	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Link == "" {
+	streams, err := parseClockLinks([]byte(body), providerName)
+	if err != nil {
 		return nil
 	}
+	return streams
+}
 
-	// Decode hex-encoded link if needed
-	link := resp.Link
-	if isHexEncoded(link) {
-		link = decodeHexProviderID(link)
+func parseClockLinks(body []byte, providerName string) ([]*source.Stream, error) {
+	var response struct {
+		Link  string `json:"link"`
+		Links []struct {
+			Link          string `json:"link"`
+			ResolutionStr string `json:"resolutionStr"`
+		} `json:"links"`
 	}
-
-	if link == "" || isEmbedURL(link) {
-		return nil
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("decode clock response: %w", err)
 	}
-
-	// Fix relative URLs
-	if strings.HasPrefix(link, "//") {
-		link = "https:" + link
+	if response.Link != "" {
+		response.Links = append(response.Links, struct {
+			Link          string `json:"link"`
+			ResolutionStr string `json:"resolutionStr"`
+		}{Link: response.Link})
 	}
-
-	return []*source.Stream{{
-		Provider:      providerName,
-		Quality:       "auto",
-		URL:           link,
-		Referer:       Referer,
-		NeedsReferrer: needsReferrerProvider(providerName),
-	}}
+	streams := make([]*source.Stream, 0, len(response.Links))
+	for _, candidate := range response.Links {
+		link := candidate.Link
+		if isHexEncoded(link) {
+			link = decodeHexProviderID(link)
+		}
+		if strings.HasPrefix(link, "//") {
+			link = "https:" + link
+		}
+		if link == "" || isEmbedURL(link) {
+			continue
+		}
+		quality := candidate.ResolutionStr
+		if quality == "" {
+			quality = "auto"
+		} else if _, err := strconv.Atoi(quality); err == nil {
+			quality += "p"
+		}
+		streams = append(streams, &source.Stream{Provider: providerName, Quality: quality, URL: link, Referer: Referer, NeedsReferrer: needsReferrerProvider(providerName)})
+	}
+	if len(streams) == 0 {
+		return nil, fmt.Errorf("clock response contained no playable links")
+	}
+	return streams, nil
 }
 
 // sortStreamsByQuality sorts streams by quality (best first)

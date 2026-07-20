@@ -18,6 +18,7 @@ import (
 )
 
 const allAnimeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0"
+const episodeQueryHash = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
 
 const (
 	BaseURL    = "https://api.allanime.day/api"
@@ -28,16 +29,21 @@ const (
 )
 
 type AllanimeClient struct {
-	http    *http.Client
-	baseURL string
+	http      *http.Client
+	baseURL   string
+	bootstrap *cryptoBootstrap
+	now       func() time.Time
 }
 
 func NewAllanimeClient() *AllanimeClient {
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
 	return &AllanimeClient{
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		baseURL: BaseURL,
+		http:      httpClient,
+		baseURL:   BaseURL,
+		bootstrap: newCryptoBootstrap(httpClient, "https://mkissa.to", time.Now),
+		now:       time.Now,
 	}
 }
 
@@ -48,14 +54,14 @@ func (c *AllanimeClient) SearchShows(ctx context.Context, query string, limit in
 
 	variables := map[string]interface{}{
 		"search": map[string]interface{}{
-			"allowAdult":     false,
-			"allowUnknown":   false,
-			"query":         query,
+			"allowAdult":   false,
+			"allowUnknown": false,
+			"query":        query,
 		},
-		"limit":          limit,
-		"page":           page,
+		"limit":           limit,
+		"page":            page,
 		"translationType": translationType,
-		"countryOrigin":  "ALL",
+		"countryOrigin":   "ALL",
 	}
 
 	resp, err := c.doGraphQL(ctx, searchQuery, variables)
@@ -129,23 +135,20 @@ type ShowEpisodesRaw struct {
 	Show struct {
 		ID                      string                 `json:"_id"`
 		Name                    string                 `json:"name"`
-		AvailableEpisodesDetail  map[string]interface{} `json:"availableEpisodesDetail"`
+		AvailableEpisodesDetail map[string]interface{} `json:"availableEpisodesDetail"`
 	} `json:"show"`
 }
 
 // Get episode sources (provider references)
 func (c *AllanimeClient) GetEpisodeSources(ctx context.Context, showID, episodeString, translationType string) ([]SourceUrl, error) {
-	variables := map[string]interface{}{
-		"showId":          showID,
-		"episodeString":   episodeString,
-		"translationType": translationType,
-	}
-
-	resp, err := c.doGraphQL(ctx, queryEpisodeSources, variables)
+	resp, material, err := c.doPersistedEpisode(ctx, showID, episodeString, translationType)
 	if err != nil {
 		return nil, err
 	}
+	return parseEpisodeSourcesResponse(resp, material)
+}
 
+func parseEpisodeSourcesResponse(resp []byte, material cryptoMaterial) ([]SourceUrl, error) {
 	// Try to parse response as either encrypted (tobeparsed) or direct sourceUrls
 	// Persisted query returns: {"_m":"b7","tobeparsed":"..."}
 	// Regular GraphQL returns: {"data":{"episode":{"sourceUrls":[...]}}}
@@ -153,17 +156,25 @@ func (c *AllanimeClient) GetEpisodeSources(ctx context.Context, showID, episodeS
 	if err := json.Unmarshal(resp, &rawResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+	if errorsValue, ok := rawResp["errors"].([]interface{}); ok && len(errorsValue) > 0 {
+		if first, ok := errorsValue[0].(map[string]interface{}); ok {
+			if message, ok := first["message"].(string); ok && message != "" {
+				return nil, fmt.Errorf("episode GraphQL error: %s", message)
+			}
+		}
+		return nil, fmt.Errorf("episode GraphQL request failed")
+	}
 
 	// Check for persisted query format - direct _m and tobeparsed (no data wrapper)
 	if toBeParsed, ok := rawResp["tobeparsed"].(string); ok && toBeParsed != "" {
-		return decodeToBeParsed(toBeParsed)
+		return decodeToBeParsed(toBeParsed, material)
 	}
 
 	// Check for GraphQL wrapper format
 	if data, ok := rawResp["data"].(map[string]interface{}); ok {
 		// Try lowercase 'tobeparsed'
 		if toBeParsed, ok := data["tobeparsed"].(string); ok && toBeParsed != "" {
-			return decodeToBeParsed(toBeParsed)
+			return decodeToBeParsed(toBeParsed, material)
 		}
 		// Check for regular episode format with sourceUrls
 		if episode, ok := data["episode"].(map[string]interface{}); ok {
@@ -180,6 +191,43 @@ func (c *AllanimeClient) GetEpisodeSources(ctx context.Context, showID, episodeS
 	}
 
 	return nil, fmt.Errorf("no valid source URLs found in response")
+}
+
+func (c *AllanimeClient) doPersistedEpisode(ctx context.Context, showID, episodeString, translationType string) ([]byte, cryptoMaterial, error) {
+	material, err := c.bootstrap.material(ctx)
+	if err != nil {
+		return nil, cryptoMaterial{}, fmt.Errorf("discover episode crypto material: %w", err)
+	}
+	aaReq, err := createAAReq(episodeQueryHash, material, c.now())
+	if err != nil {
+		return nil, cryptoMaterial{}, fmt.Errorf("create episode aaReq: %w", err)
+	}
+	requestURL, err := buildEpisodeRequestURL(c.baseURL, showID, translationType, episodeString, episodeQueryHash, aaReq)
+	if err != nil {
+		return nil, cryptoMaterial{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, cryptoMaterial{}, fmt.Errorf("create episode request: %w", err)
+	}
+	req.Header.Set("User-Agent", allAnimeUserAgent)
+	req.Header.Set("Referer", "https://youtu-chan.com")
+	req.Header.Set("Origin", "https://youtu-chan.com")
+	req.Header.Set("x-build-id", material.buildID)
+
+	response, err := c.http.Do(req)
+	if err != nil {
+		return nil, cryptoMaterial{}, fmt.Errorf("send episode request: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return nil, cryptoMaterial{}, fmt.Errorf("read episode response: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, cryptoMaterial{}, fmt.Errorf("episode request returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, material, nil
 }
 
 func getMapKeys(m map[string]interface{}) []string {
@@ -328,7 +376,7 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 	}
 
 	// Persisted query hash for episode (from ani-cli)
-	queryHash := "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
+	queryHash := episodeQueryHash
 
 	// Build URL with persisted query
 	showId := req.Variables["showId"].(string)
@@ -341,7 +389,7 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 		episodeString = ep
 	}
 
-	apiURL, err := buildEpisodeRequestURL(c.baseURL, showId, translationType, episodeString, queryHash)
+	apiURL, err := buildEpisodeRequestURL(c.baseURL, showId, translationType, episodeString, queryHash, "")
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +436,7 @@ func (c *AllanimeClient) doGraphQLCurlPersisted(ctx context.Context, reqBody []b
 	return nil, fmt.Errorf("persisted query failed")
 }
 
-func buildEpisodeRequestURL(baseURL, showID, translationType, episodeString, queryHash string) (string, error) {
+func buildEpisodeRequestURL(baseURL, showID, translationType, episodeString, queryHash, aaReq string) (string, error) {
 	variables, err := json.Marshal(map[string]string{
 		"showId":          showID,
 		"translationType": translationType,
@@ -399,6 +447,7 @@ func buildEpisodeRequestURL(baseURL, showID, translationType, episodeString, que
 	}
 
 	extensions, err := json.Marshal(map[string]interface{}{
+		"aaReq": aaReq,
 		"persistedQuery": map[string]interface{}{
 			"version":    1,
 			"sha256Hash": queryHash,

@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -31,7 +32,7 @@ func generateAllAnimeKey() string {
 
 // decodeToBeParsed decrypts AllAnime's encrypted "tobeparsed" payload
 // This implements the same logic as the shell script's decode_tobeparsed() function
-func decodeToBeParsed(encoded string) ([]SourceUrl, error) {
+func decodeToBeParsed(encoded string, material cryptoMaterial) ([]SourceUrl, error) {
 	// Step 1: Decode base64
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
@@ -43,93 +44,96 @@ func decodeToBeParsed(encoded string) ([]SourceUrl, error) {
 	}
 
 	if len(data) < 29 {
-		return nil, nil
+		return nil, fmt.Errorf("encrypted episode payload is too short")
 	}
 
-	// Step 2: Extract IV (12 bytes from offset 1)
 	iv := data[1:13]
-
-	// Step 3: Create CTR counter (IV + 00000002)
-	ctr := make([]byte, 16)
-	copy(ctr, iv)
-	ctr[15] = 0x02
-
-	// Step 4: Extract ciphertext (skip 13 bytes header, remove 16 bytes for tag)
-	ciphertext := data[13 : len(data)-16]
-
-	// Step 5: AES-256-CTR decrypt
-	plaintext, err := decryptAESCTR(AllAnimeKey, ctr, ciphertext)
-	if err != nil {
-		return nil, err
+	sealed := data[13:]
+	decryptGCM := func(key []byte) ([]byte, error) {
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, err
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, err
+		}
+		return gcm.Open(nil, iv, sealed, nil)
 	}
 
-	// Step 6: Parse JSON - extract sourceUrl and sourceName
+	plaintext, dynamicErr := decryptGCM(material.key)
+	if dynamicErr != nil {
+		fallbackKey := sha256.Sum256([]byte(fmt.Sprintf("Xot36i3lK3:v%d", data[0])))
+		plaintext, err = decryptGCM(fallbackKey[:])
+		if err != nil {
+			if !material.legacyCTR {
+				return nil, fmt.Errorf("decrypt episode payload with dynamic and response keys: %w", dynamicErr)
+			}
+			ctr := make([]byte, 16)
+			copy(ctr, iv)
+			ctr[15] = 0x02
+			block, blockErr := aes.NewCipher(material.key)
+			if blockErr != nil {
+				return nil, blockErr
+			}
+			plaintext = make([]byte, len(data[13:len(data)-16]))
+			cipher.NewCTR(block, ctr).XORKeyStream(plaintext, data[13:len(data)-16])
+		}
+	}
 	return parseSourceUrls(string(plaintext))
 }
 
 // parseSourceUrls extracts sourceUrl and sourceName from decrypted JSON
 // Format: {"sourceUrl":"url","sourceName":"name",...}
 func parseSourceUrls(jsonStr string) ([]SourceUrl, error) {
-	var results []SourceUrl
-
-	// Use regex to find all sourceUrl and sourceName pairs
-	// Handle both "sourceUrl" and just "url" in JSON
-	urlRe := regexp.MustCompile(`"sourceUrl"\s*:\s*"([^"]*)"`)
-	nameRe := regexp.MustCompile(`"sourceName"\s*:\s*"([^"]*)"`)
-
-	urlMatches := urlRe.FindAllStringSubmatch(jsonStr, -1)
-	nameMatches := nameRe.FindAllStringSubmatch(jsonStr, -1)
-
-	for i, urlMatch := range urlMatches {
-		if len(urlMatch) < 2 {
-			continue
-		}
-
-		url := urlMatch[1]
-
-		// Get corresponding sourceName if available
-		var name string
-		if i < len(nameMatches) && len(nameMatches[i]) >= 2 {
-			name = nameMatches[i][1]
-		}
-
-		// Skip empty URLs
-		if url == "" {
-			continue
-		}
-
-		// Handle hex-encoded provider IDs (start with --)
-		if strings.HasPrefix(url, "--") {
-			decoded := decodeHexProviderID(url[2:])
-			if decoded != "" {
-				results = append(results, SourceUrl{
-					SourceName: name,
-					SourceUrl:  decoded,
-				})
-			}
-		} else {
-			results = append(results, SourceUrl{
-				SourceName: name,
-				SourceUrl:  url,
-			})
-		}
+	type entry struct {
+		SourceURL  string `json:"sourceUrl"`
+		URL        string `json:"url"`
+		SourceName string `json:"sourceName"`
+		Priority   int    `json:"priority"`
 	}
-
-	// If no matches from sourceUrl, try "url" field directly
-	if len(results) == 0 {
-		// Look for URL-like patterns
-		directUrlRe := regexp.MustCompile(`"url"\s*:\s*"([^"]+\.(?:mp4|m3u8)[^"]*)"`)
-		directMatches := directUrlRe.FindAllStringSubmatch(jsonStr, -1)
-		for _, match := range directMatches {
-			if len(match) >= 2 && match[1] != "" {
-				results = append(results, SourceUrl{
-					SourceName: "default",
-					SourceUrl:  match[1],
-				})
+	var root interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &root); err != nil {
+		return nil, fmt.Errorf("decode episode source JSON: %w", err)
+	}
+	var entries []entry
+	var collect func(interface{})
+	collect = func(value interface{}) {
+		switch typed := value.(type) {
+		case []interface{}:
+			for _, item := range typed {
+				collect(item)
+			}
+		case map[string]interface{}:
+			if rawURL, ok := typed["sourceUrl"].(string); ok || typed["url"] != nil {
+				encoded, _ := json.Marshal(typed)
+				var candidate entry
+				if json.Unmarshal(encoded, &candidate) == nil && (rawURL != "" || candidate.URL != "") {
+					entries = append(entries, candidate)
+					return
+				}
+			}
+			for _, key := range []string{"sourceUrls", "episode", "data"} {
+				if child, ok := typed[key]; ok {
+					collect(child)
+				}
 			}
 		}
 	}
-
+	collect(root)
+	results := make([]SourceUrl, 0, len(entries))
+	for _, item := range entries {
+		rawURL := item.SourceURL
+		if rawURL == "" {
+			rawURL = item.URL
+		}
+		if strings.HasPrefix(rawURL, "--") {
+			rawURL = decodeHexProviderID(rawURL[2:])
+		}
+		if rawURL != "" {
+			results = append(results, SourceUrl{SourceName: item.SourceName, SourceUrl: rawURL, Priority: item.Priority})
+		}
+	}
 	return results, nil
 }
 
@@ -209,10 +213,10 @@ func decryptAESCTR(keyHex string, iv []byte, ciphertext []byte) ([]byte, error) 
 
 // ProviderConfig matches the ani-cli generate_link case statement
 type ProviderConfig struct {
-	ID       int    // 1=wixmp, 2=youtube, 3=sharepoint, 5=filemoon, 0=default(hianime)
-	Name     string
-	Pattern  string // sed pattern to match line
-	Type     string // "m3u8" or "mp4"
+	ID      int // 1=wixmp, 2=youtube, 3=sharepoint, 5=filemoon, 0=default(hianime)
+	Name    string
+	Pattern string // sed pattern to match line
+	Type    string // "m3u8" or "mp4"
 }
 
 // ProviderConfigs matches the order in ani-cli generate_link:
@@ -321,93 +325,177 @@ func decodeHexProviderID(encoded string) string {
 func decodeHexPair(hex string) byte {
 	switch strings.ToLower(hex) {
 	// Uppercase letters
-	case "79": return 'A'
-	case "7a": return 'B'
-	case "7b": return 'C'
-	case "7c": return 'D'
-	case "7d": return 'E'
-	case "7e": return 'F'
-	case "7f": return 'G'
-	case "70": return 'H'
-	case "71": return 'I'
-	case "72": return 'J'
-	case "73": return 'K'
-	case "74": return 'L'
-	case "75": return 'M'
-	case "76": return 'N'
-	case "77": return 'O'
-	case "68": return 'P'
-	case "69": return 'Q'
-	case "6a": return 'R'
-	case "6b": return 'S'
-	case "6c": return 'T'
-	case "6d": return 'U'
-	case "6e": return 'V'
-	case "6f": return 'W'
-	case "60": return 'X'
-	case "61": return 'Y'
-	case "62": return 'Z'
+	case "79":
+		return 'A'
+	case "7a":
+		return 'B'
+	case "7b":
+		return 'C'
+	case "7c":
+		return 'D'
+	case "7d":
+		return 'E'
+	case "7e":
+		return 'F'
+	case "7f":
+		return 'G'
+	case "70":
+		return 'H'
+	case "71":
+		return 'I'
+	case "72":
+		return 'J'
+	case "73":
+		return 'K'
+	case "74":
+		return 'L'
+	case "75":
+		return 'M'
+	case "76":
+		return 'N'
+	case "77":
+		return 'O'
+	case "68":
+		return 'P'
+	case "69":
+		return 'Q'
+	case "6a":
+		return 'R'
+	case "6b":
+		return 'S'
+	case "6c":
+		return 'T'
+	case "6d":
+		return 'U'
+	case "6e":
+		return 'V'
+	case "6f":
+		return 'W'
+	case "60":
+		return 'X'
+	case "61":
+		return 'Y'
+	case "62":
+		return 'Z'
 	// Lowercase letters
-	case "59": return 'a'
-	case "5a": return 'b'
-	case "5b": return 'c'
-	case "5c": return 'd'
-	case "5d": return 'e'
-	case "5e": return 'f'
-	case "5f": return 'g'
-	case "50": return 'h'
-	case "51": return 'i'
-	case "52": return 'j'
-	case "53": return 'k'
-	case "54": return 'l'
-	case "55": return 'm'
-	case "56": return 'n'
-	case "57": return 'o'
-	case "48": return 'p'
-	case "49": return 'q'
-	case "4a": return 'r'
-	case "4b": return 's'
-	case "4c": return 't'
-	case "4d": return 'u'
-	case "4e": return 'v'
-	case "4f": return 'w'
-	case "40": return 'x'
-	case "41": return 'y'
-	case "42": return 'z'
+	case "59":
+		return 'a'
+	case "5a":
+		return 'b'
+	case "5b":
+		return 'c'
+	case "5c":
+		return 'd'
+	case "5d":
+		return 'e'
+	case "5e":
+		return 'f'
+	case "5f":
+		return 'g'
+	case "50":
+		return 'h'
+	case "51":
+		return 'i'
+	case "52":
+		return 'j'
+	case "53":
+		return 'k'
+	case "54":
+		return 'l'
+	case "55":
+		return 'm'
+	case "56":
+		return 'n'
+	case "57":
+		return 'o'
+	case "48":
+		return 'p'
+	case "49":
+		return 'q'
+	case "4a":
+		return 'r'
+	case "4b":
+		return 's'
+	case "4c":
+		return 't'
+	case "4d":
+		return 'u'
+	case "4e":
+		return 'v'
+	case "4f":
+		return 'w'
+	case "40":
+		return 'x'
+	case "41":
+		return 'y'
+	case "42":
+		return 'z'
 	// Digits
-	case "08": return '0'
-	case "09": return '1'
-	case "0a": return '2'
-	case "0b": return '3'
-	case "0c": return '4'
-	case "0d": return '5'
-	case "0e": return '6'
-	case "0f": return '7'
-	case "00": return '8'
-	case "01": return '9'
+	case "08":
+		return '0'
+	case "09":
+		return '1'
+	case "0a":
+		return '2'
+	case "0b":
+		return '3'
+	case "0c":
+		return '4'
+	case "0d":
+		return '5'
+	case "0e":
+		return '6'
+	case "0f":
+		return '7'
+	case "00":
+		return '8'
+	case "01":
+		return '9'
 	// Special characters
-	case "15": return '-'
-	case "16": return '.'
-	case "67": return '_'
-	case "46": return '~'
-	case "02": return ':'
-	case "17": return '/'
-	case "07": return '?'
-	case "1b": return '#'
-	case "63": return '['
-	case "65": return ']'
-	case "78": return '@'
-	case "19": return '!'
-	case "1c": return '$'
-	case "1e": return '&'
-	case "10": return '('
-	case "11": return ')'
-	case "12": return '*'
-	case "13": return '+'
-	case "14": return ','
-	case "03": return ';'
-	case "05": return '='
-	case "1d": return '%'
+	case "15":
+		return '-'
+	case "16":
+		return '.'
+	case "67":
+		return '_'
+	case "46":
+		return '~'
+	case "02":
+		return ':'
+	case "17":
+		return '/'
+	case "07":
+		return '?'
+	case "1b":
+		return '#'
+	case "63":
+		return '['
+	case "65":
+		return ']'
+	case "78":
+		return '@'
+	case "19":
+		return '!'
+	case "1c":
+		return '$'
+	case "1e":
+		return '&'
+	case "10":
+		return '('
+	case "11":
+		return ')'
+	case "12":
+		return '*'
+	case "13":
+		return '+'
+	case "14":
+		return ','
+	case "03":
+		return ';'
+	case "05":
+		return '='
+	case "1d":
+		return '%'
 	default:
 		// Return first char if not recognized, or '?'
 		if len(hex) >= 1 {
