@@ -90,15 +90,17 @@ anilix/
 │   ├── models.go                    # State machine (SearchModel, state types)
 │   ├── search.go                    # SearchModel - main TUI model with Init/Update
 │   ├── views.go                     # View rendering for all states
+│   ├── shell.go                     # Application shell (app bar, content region, footer)
+│   ├── nav.go                       # Navigation drawer and its destinations
 │   ├── commands.go                  # Tea commands (async operations)
 │   ├── messages.go                  # Tea message types
-│   ├── items.go                     # List item implementations
+│   ├── items.go                     # List rows and the result list delegate
 │   ├── keymap.go                    # Key binding definitions
-│   ├── theme.go                     # Cyberpunk color theme
+│   ├── furniture.go                 # Screen furniture shared by the views
+│   ├── themeview.go                 # The design system showcase
 │   ├── recent.go                    # Recent search persistence
-│   └── style/
-│       ├── style.go                 # Core Lipgloss styles
-│       └── extra.go                 # Gradient helpers, popup boxes
+│   ├── theme/                       # Design tokens: roles, type, spacing, shape, icons
+│   └── ui/                          # Components: buttons, chips, lists, dialogs, fields
 ├── provider/
 │   ├── init.go                      # Provider registration note
 │   ├── provider.go                  # Provider registry
@@ -341,7 +343,29 @@ Bubble Tea v2 terminal UI with an Elm architecture state machine.
 | `/` | Focus search bar |
 | `Ctrl+T` | Toggle sub/dub |
 | `Ctrl+S` | Open settings popup |
+| `Ctrl+G` | Open the design system showcase |
 | `Ctrl+C` | Quit |
+
+**Design system:**
+The visual foundation lives in two packages, documented in
+[docs/design-system.md](design-system.md):
+
+- `tui/theme` - semantic colour roles, the typography and spacing scales, the
+  elevation model, the icon set and the terminal capability detection
+  (`theme.Profile`, `theme.HasColor`, `theme.HasUnicode`).
+- `tui/ui` - the component library: buttons, chips, badges, cards, list and
+  menu items, tabs, dialogs, input fields, metadata rows, empty/error/loading
+  states, and the layout helpers (`ui.BreakpointOf`, `ui.ListWidth`,
+  `ui.OverlayWidth`).
+- `tui/shell.go` and `tui/nav.go` - the frame of the application: the app bar,
+  the content region, the footer and the navigation drawer.
+
+Screens must not hardcode colours or build their own styles: they compose
+`ui` components with `theme` roles. The pre-redesign palette is gone; every
+screen of the application draws itself from the tokens.
+
+Run `anilix theme` to print the whole system, or press `Ctrl+G` inside the
+app.
 
 ### `provider/jikan`
 

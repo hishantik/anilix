@@ -109,6 +109,10 @@
     <td align="center">Open settings popup</td>
   </tr>
   <tr>
+    <td align="center"><code>Ctrl+G</code></td>
+    <td align="center">Open the design system showcase</td>
+  </tr>
+  <tr>
     <td align="center"><code>Ctrl+C</code></td>
     <td align="center">Quit</td>
   </tr>
@@ -276,6 +280,11 @@ anilix anilist logout   # Logout from AniList
     <td align="center"><code>anilist.username</code></td>
     <td align="center"><em>(empty)</em></td>
     <td align="center">AniList username (set after login)</td>
+  </tr>
+  <tr>
+    <td align="center"><code>artwork.renderer</code></td>
+    <td align="center"><code>auto</code></td>
+    <td align="center">Cover-art renderer (<code>auto</code>, <code>kitty</code>, <code>sixel</code>, <code>iterm2</code>, <code>halfblock</code>, <code>chafa</code>, <code>ascii</code>/<code>none</code>). Configured renderers are only honoured when the terminal actually advertises them; a renderer that fails is skipped for the session.</td>
   </tr>
 </table>
 

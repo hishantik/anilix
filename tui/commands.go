@@ -201,12 +201,20 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 }
 
 // downloadCoverCmd downloads and renders a cover image for a given result index.
-func downloadCoverCmd(coverURL string, panelWidth int, index int, maxRows int) tea.Cmd {
+//
+// The width and the rows are the size of the image itself, without the
+// frame it is shown in: the cover is rendered for the panel it lands in, so
+// a resize renders it again.
+//
+// The renderer is adaptive: the cover is rendered with the best protocol
+// of the chain, and a protocol that fails is skipped for the session. A
+// terminal without a picture protocol never downloads anything: the
+// framed placeholder needs no image.
+func downloadCoverCmd(coverURL string, width, rows, index int) tea.Cmd {
 	if coverURL == "" {
 		return nil
 	}
-	protocol := DetectTerminalProtocol()
-	if protocol == ProtocolNone {
+	if !chainCanRenderPictures() {
 		return nil
 	}
 	return func() tea.Msg {
@@ -214,14 +222,28 @@ func downloadCoverCmd(coverURL string, panelWidth int, index int, maxRows int) t
 		if err != nil {
 			return CoverImageLoadedMsg{Rendered: "", Index: index}
 		}
-		result := RenderCoverImageKitty(img, panelWidth, protocol, cachePath, maxRows)
+		result := RenderAdaptive(img, width, rows, cachePath, coverURL)
 		return CoverImageLoadedMsg{
 			Rendered:         result.Placeholder,
 			KittyTransmitSeq: result.TransmitSeq,
-			KittyImageID:     result.ImageID,
+			KittyImageID:     result.KittyImageID,
 			Index:            index,
+			Width:            width,
+			Rows:             rows,
 		}
 	}
+}
+
+// chainCanRenderPictures reports whether any protocol of the chain draws
+// an actual picture. The placeholder at the end of the chain does not:
+// it is the reason the download would be wasted.
+func chainCanRenderPictures() bool {
+	for _, p := range rendererChain() {
+		if p != ProtocolNone {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *SearchModel) fetchMetadata() tea.Cmd {

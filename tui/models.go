@@ -10,10 +10,21 @@ type tuiState int
 
 const (
 	searchState tuiState = iota
+	// animeState is the details of the selected anime: the screen the
+	// compact layout opens, and the step between the results and the
+	// episode list.
+	animeState
 	detailState
+	historyState
 	confirmQuitState
 	settingsState
 	anilistLoginState
+	themeState
+	// anilistState is the AniList account screen: the authentication
+	// status, the tracking and the login and logout actions.
+	anilistState
+	// confirmLogoutState asks before the AniList credentials are dropped.
+	confirmLogoutState
 )
 
 // SelectionResult holds the selected anime and episode
@@ -41,6 +52,8 @@ type MetadataPanel struct {
 	TitleNative  string
 	Cover        string
 	CoverImage   string // Rendered ANSI cover art (half-block), empty if not available
+	CoverWidth   int    // The width the cover was rendered at
+	CoverRows    int    // The number of rows the cover was rendered at
 	Year         int
 	Type         string
 	Status       string
@@ -84,7 +97,8 @@ type EpisodeMetadataPanel struct {
 type SettingsState struct {
 	Quality        string // "1080p", "720p", "480p", "360p", "auto"
 	AniskipEnabled bool
-	Cursor         int    // 0 = quality, 1 = aniskip, 2 = anilist, 3 = update
+	Cursor         int    // index into the grouped rows of the sheet
+	Scroll         int    // first visible row, so the sheet fits small terminals
 	UpdateStatus   string // "", "checking", "updated", "error"
 	UpdateVersion  string // latest version tag, e.g. "v1.7.0"
 	UpdateError    error

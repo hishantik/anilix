@@ -79,6 +79,8 @@ type CoverImageLoadedMsg struct {
 	KittyTransmitSeq string // APC sequence for Kitty graphics (empty for non-Kitty)
 	KittyImageID     uint32 // Image ID for Kitty graphics cleanup
 	Index            int    // Result index this cover belongs to
+	Width            int    // The width the cover was rendered at
+	Rows             int    // The number of rows the cover was rendered at
 }
 
 // TrackingUpdateMsg is sent after a tracking progress update completes.

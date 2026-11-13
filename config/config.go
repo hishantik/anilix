@@ -53,6 +53,9 @@ func setDefaults() {
 	v.SetDefault("history.enabled", true)
 	v.SetDefault("aniskip.enabled", true)
 	v.SetDefault("anilist.tracking.enabled", true)
+	// artwork.renderer: auto | kitty | sixel | iterm2 | halfblock | chafa | ascii | none
+	v.SetDefault("artwork.renderer", "auto")
+	v.SetDefault("ui.sidebar", "expanded")
 }
 
 func setPaths() {

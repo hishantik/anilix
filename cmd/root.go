@@ -43,4 +43,3 @@ func runTUI(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("Selected: %s (MAL ID: %d, Episode: %s)\n", result.Anime.Name, result.Anime.MALID, result.Episode)
 }
-
