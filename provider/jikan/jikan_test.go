@@ -25,6 +25,10 @@ func TestJikanProvider_ID(t *testing.T) {
 }
 
 func TestJikanProvider_Search(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network test in short mode")
+	}
+
 	jp := NewJikanProvider()
 
 	results, err := jp.Search("Naruto")

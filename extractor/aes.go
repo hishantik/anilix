@@ -8,13 +8,13 @@ import (
 	"fmt"
 )
 
-// AESKey is the AllAnime decryption key (commonly used)
+// AESKey is the shared key used by embed payload decryption (commonly used)
 var AESKey = []byte{
 	0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
 	0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
 }
 
-// DecryptPayload decrypts AllAnime's encrypted payload using AES-256-CTR
+// DecryptPayload decrypts an AES-256-CTR encrypted embed payload
 func DecryptPayload(encryptedData string) (string, error) {
 	// Decode base64
 	decoded, err := base64.StdEncoding.DecodeString(encryptedData)
@@ -22,7 +22,7 @@ func DecryptPayload(encryptedData string) (string, error) {
 		return "", fmt.Errorf("base64 decode failed: %w", err)
 	}
 
-	// AllAnime format: first 16 bytes = IV, rest = ciphertext
+	// Payload format: first 16 bytes = IV, rest = ciphertext
 	if len(decoded) < 17 {
 		return "", fmt.Errorf("encrypted data too short: %d bytes", len(decoded))
 	}

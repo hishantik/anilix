@@ -428,9 +428,9 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	if meta.TitleNative != "" {
 		fixedLines++
 	}
-	fixedLines += 3            // separators + blank lines
+	fixedLines += 3 // separators + blank lines
 	fixedLines += synopsisLines
-	fixedLines += 3            // second separator + blanks
+	fixedLines += 3                          // second separator + blanks
 	episodeHeight := height - fixedLines - 8 // chrome reservation
 	if episodeHeight < 5 {
 		episodeHeight = 5

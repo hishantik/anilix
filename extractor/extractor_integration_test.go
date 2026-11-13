@@ -5,18 +5,16 @@ import (
 	"testing"
 )
 
-func TestIntegration_ExtractStreamFromAllAnimeSources(t *testing.T) {
+func TestIntegration_ExtractorRegistry(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
 	_ = context.Background()
 
-	// Get real sources from AllAnime for an episode
-	// We'll use known working embed URLs to test extraction
-
-	// Test Hianime extractor if we can find a hianime source
-	// Since AllAnime sources change, we test the extraction mechanism
+	// Test the extraction mechanism with registered extractors.
+	// Real embed URLs change constantly, so we exercise registration and
+	// resolution rather than specific hosts.
 
 	t.Log("Testing extractor resolution and extraction mechanism...")
 
@@ -37,7 +35,7 @@ func TestIntegration_ExtractStreamFromAllAnimeSources(t *testing.T) {
 	}
 
 	// Test resolution - should find matching extractor
-	// Note: We can't test with real URLs without knowing current AllAnime sources
+	// Note: We can't test with real URLs without knowing current embed sources
 	// But we can verify the resolver works
 	testURLs := []string{
 		"https://hianime.com/watch/123",

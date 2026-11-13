@@ -18,7 +18,7 @@ A cyberpunk-themed terminal anime streaming client written in Go. Search anime, 
   - [tui](#tui)
   - [provider/jikan](#providerjikan)
   - [provider/anilist](#provideranilist)
-  - [provider/allanime](#providerallanime)
+  - [provider/hianime](#providerhianime)
   - [extractor](#extractor)
   - [player](#player)
   - [aniskip](#aniskip)
@@ -35,7 +35,7 @@ A cyberpunk-themed terminal anime streaming client written in Go. Search anime, 
 
 ## Overview
 
-Anilix is a Go CLI/TUI application that lets users search for anime, browse episodes, and stream video directly from the terminal. It combines metadata from Jikan (MyAnimeList API) and AniList with streaming content from AllAnime, bridged by an `AnimeLinker` that maps metadata IDs to streaming provider IDs.
+Anilix is a Go CLI/TUI application that lets users search for anime, browse episodes, and stream video directly from the terminal. It scrapes streaming from hianime.at and enriches results with metadata from Jikan (MyAnimeList API) and AniList.
 
 ### Key Features
 
@@ -48,7 +48,7 @@ Anilix is a Go CLI/TUI application that lets users search for anime, browse epis
 - **Recent Searches** - Persists last 10 searches for quick access
 - **Multi-host Extraction** - Parallel stream extraction from multiple hosts with fallback
 - **Android Proxy** - Local HTTP proxy for seamless playback on Termux/PRoot
-- **Persistent Caching** - SQLite-backed ID mapping for fast repeated lookups
+- **ID Mapping** - MAL IDs recovered from the hianime embed URL, enabling AniSkip and metadata
 
 ---
 
@@ -56,7 +56,7 @@ Anilix is a Go CLI/TUI application that lets users search for anime, browse epis
 
 | Technology | Purpose |
 |------------|---------|
-| **Go 1.25** | Language and runtime |
+| **Go 1.26** | Language and runtime |
 | [Cobra](https://github.com/spf13/cobra) v1.10 | CLI command framework |
 | [Viper](https://github.com/spf13/viper) v1.21 | Configuration management (TOML) |
 | [Bubbletea v2](https://github.com/charmbracelet/bubbletea) | TUI framework (Elm architecture) |
@@ -65,7 +65,7 @@ Anilix is a Go CLI/TUI application that lets users search for anime, browse epis
 | [GoReleaser](https://github.com/goreleaser/goreleaser) | Cross-platform release builds |
 | `exec.Command("curl")` | HTTP requests via curl binary (PRoot compatibility) |
 | `crypto/aes` | AES-256-CTR stream payload decryption |
-| `database/sql` | SQLite persistent caching |
+| `crypto/cipher` | AES-GCM token / payload decryption |
 
 ---
 
@@ -107,8 +107,6 @@ anilix/
 │   │   ├── client.go                # Jikan REST API client
 │   │   ├── client_test.go           # Client unit tests
 │   │   ├── jikan_test.go            # Provider unit tests
-│   │   ├── linker.go                # AnimeLinker (MAL ID → AllAnime ID)
-│   │   ├── linker_test.go           # Linker unit tests
 │   │   ├── types.go                 # Jikan API response types
 │   │   ├── init.go                  # Jikan provider registration
 │   │   └── integration_test.go      # Network integration tests
@@ -117,15 +115,14 @@ anilix/
 │   │   ├── client.go                # AniList GraphQL client
 │   │   ├── types.go                 # AniList GraphQL types
 │   │   └── integration_test.go      # Network integration tests
-│   └── allanime/
-│       ├── allanime.go              # AllanimeProvider (Source impl - episodes/streams)
-│       ├── client.go                # AllAnime GraphQL client + AES decryption
-│       ├── decoder.go               # Hex decoder utilities
-│       ├── queries.go               # GraphQL query constants
-│       ├── types.go                 # AllAnime API response types
-│       ├── init.go                  # AllAnime provider registration
-│       ├── integration_test.go      # Network integration tests
-│       └── stream_integration_test.go # Stream extraction integration tests
+│   └── hianime/
+│       ├── hianime.go               # Provider (Source impl - search/episodes/streams)
+│       ├── client.go                # hianime.at scraping client
+│       ├── blob.go                  # Embed config deobfuscation (base64 + XOR)
+│       ├── timeouts.go              # Per-operation timeouts
+│       ├── init.go                  # Hianime provider registration
+│       ├── hianime_test.go          # Parser unit tests
+│       └── integration_test.go      # Network integration tests
 ├── extractor/
 │   ├── extractor.go                 # Extractor interface + registry + Resolve()
 │   ├── init.go                      # Extractor registration (init)
@@ -151,7 +148,8 @@ anilix/
 ├── aniskip/
 │   └── client.go                    # AniSkip API client (intro/outro times)
 ├── curl/
-│   └── curl.go                      # HTTP client via curl binary
+│   ├── curl.go                      # HTTP client via curl binary
+│   └── dns.go                       # DNS-pinned fetch (GetResolved) for filtered CDNs
 ├── assets/                          # SVG logo
 ├── docs/
 │   └── architechture.md             # This document
@@ -188,24 +186,19 @@ anilix/
               +-------+    +------+------+    +----------+
               v              v              v
      +----------------+ +------------+ +------------------+
-     | JikanProvider  | | AniList    | | AllanimeProvider |
-     | (metadata)     | | (metadata) | | (episodes +      |
-     | REST API       | | GraphQL    | |  streams)        |
+     | JikanProvider  | | AniList    | | HianimeProvider  |
+     | (metadata)     | | (metadata) | | (search +        |
+     | REST API       | | GraphQL    | |  episodes +      |
+     |                | |            | |  streams)        |
      +-------+--------+ +------------+ +--------+---------+
              |                                   |
              +-----------------------------------+
                          |
                          v
               +---------------------+
-              |   AnimeLinker       |
-              | MAL ID → AllAnime ID|
-              | (SQLite cached)     |
-              +---------------------+
-                         |
-                         v
-              +---------------------+
-              | AllAnime GraphQL    |
-              | Episode Sources     |
+              |  hianime.at scrape  |
+              |  episodes + servers |
+              |  → embed → m3u8     |
               +---------------------+
                          |
                          v
@@ -247,7 +240,7 @@ type Source interface {
 Three implementations exist:
 - **JikanProvider** - Implements `Search` (metadata). `SeasonsOf`, `EpisodesOf`, `StreamsOf` return empty (not its role).
 - **AniListProvider** - Implements `Search` (metadata). Same as Jikan, other methods return empty.
-- **AllanimeProvider** - Implements all methods. Primary source for episodes and streams.
+- **HianimeProvider** - Implements all methods. Primary source for search, episodes and streams.
 
 ### `extractor.Extractor` (`extractor/extractor.go`)
 
@@ -273,7 +266,7 @@ Eight implementations: hianime, filemoon, wixmp, youtube, mp4upload, vidguard, s
 Core data models shared across all packages.
 
 **Types:**
-- `Anime` - Anime title with metadata: Name, URL, Cover, Year, Genres, Status, MALID, AniListID, AllAnimeID, EpisodeCount, Type, Rating, Score, Rank, Popularity
+- `Anime` - Anime title with metadata: Name, URL, Cover, Year, Genres, Status, MALID, AniListID, ShowID, EpisodeCount, Type, Rating, Score, Rank, Popularity
 - `Episode` - Episode with Number (float64), URL, Title, Synopsis, Aired date, Score, Filler/Recap flags, Duration, Season, and back-reference to Anime
 - `Stream` - Playable stream URL with Provider name, Quality, URL, Referer, NeedsReferrer flag
 - `Season` - Season number and name
@@ -329,11 +322,11 @@ Bubble Tea v2 terminal UI with an Elm architecture state machine.
 - `recentSearches` - Persisted recent search queries
 
 **Async operations (tea.Cmd):**
-- `doSearch(query)` - Search across Jikan + AllAnime, merge results
+- `doSearch(query)` - Search hianime, enrich MAL IDs with one Jikan lookup
 - `fetchMetadataBatch(results)` - Batch-fetch AniList metadata for all results
-- `fetchEpisodes(allAnimeID, malID)` - Fetch episodes for selected anime
+- `fetchEpisodes(anime)` - Fetch episodes for selected anime
 - `fetchEpisodeMetadata()` - Fetch Jikan episode metadata on navigation
-- `playEpisode(...)` - Resolve streams and launch player
+- `playEpisode(anime, episodeNum)` - Resolve streams and launch player
 
 **Layout:**
 - Search state: 55% left (list), 45% right (metadata preview). Collapses to single column on narrow terminals (<80 cols).
@@ -361,11 +354,6 @@ REST API client for the [Jikan](https://api.jikan.moe/v4) (MyAnimeList unofficia
 
 **JikanProvider** - Implements `source.Source`. Maps Jikan API responses to `source.Anime` with English title preference (falls back to default title).
 
-**AnimeLinker** - Bridges Jikan metadata to AllAnime streaming:
-- `ResolveAllAnimeID(ctx, anime, allanimeSrc)` - Searches AllAnime by name, matches by MAL ID
-- `GetEpisodes(ctx, anime, allanimeSrc)` - Resolves AllAnimeID if needed, then fetches episodes
-- `GetStreams(episode, src)` - Delegates to source.StreamsOf
-
 ### `provider/anilist`
 
 GraphQL client for the [AniList](https://anilist.co) API. Used for batch metadata enrichment.
@@ -376,36 +364,26 @@ GraphQL client for the [AniList](https://anilist.co) API. Used for batch metadat
 
 **AniListProvider** - Implements `source.Source`. Maps AniList responses to `source.Anime`. Primarily used for metadata, not streaming.
 
-### `provider/allanime`
+### `provider/hianime`
 
-GraphQL client for the AllAnime streaming provider. This is the core content provider.
+Scraping client for [hianime.at](https://hianime.at), the provider current ani-cli uses. This is the core content provider.
 
-**AllanimeClient** - GraphQL client at `https://api.allanime.day`:
-- `SearchShows(ctx, query, limit, page, translation)` - Search shows
-- `GetShowEpisodes(ctx, showID, translation)` - Get episode numbers
-- `GetEpisodeSources(ctx, showID, episodeNum, translation)` - Get stream source URLs
-- AES-256-CTR decryption for encrypted episode source URLs
+**Client** - Scrapes hianime.at through the `curl` package (`curl.GetResolved`, which pins DNS so device-level DNS filters cannot serve a blockpage instead of the stream CDN):
+- `Search(ctx, query)` - Scrape `/search?keyword=` for show id, slug, title, poster, type
+- `GetEpisodes(ctx, showID)` - `/api/theme/episode/list/<id>` → (episode number, internal data-id) pairs
+- `GetEmbed(ctx, epDataID, translation)` - `/api/theme/episode/servers?episodeId=` → ZokoAnime embed URL (base64 `data-hash`)
+- `GetStreamConfig(ctx, embedURL)` - Fetch embed page, decode `window.__P` (base64 + XOR `otaku-embed-v1`) → m3u8 src + subtitles
+- `GetVariants(ctx, masterURL, referer)` - Parse master HLS playlist into quality variants
 
-**AllanimeProvider** - Implements `source.Source`:
-- `Search()` - GraphQL search
-- `EpisodesOf()` - Fetch episodes by AllAnimeID
-- `StreamsOf()` - Parallel stream extraction from all providers with 10s timeout
+**Provider** - Implements `source.Source`:
+- `Search()` - Scrape search results; MAL IDs are filled by the TUI via a single Jikan title match
+- `EpisodesOf()` - Episode list; opportunistically recovers `MALID` from the embed URL (`/mal/<id>/`)
+- `StreamsOf()` - Episode → data-id → embed → m3u8 master playlist → quality variants (sorted best first, with Referer set)
 
-**Stream extraction pipeline:**
-1. Fetch episode sources (provider URLs) from AllAnime GraphQL
-2. For each source URL, try registered extractors in parallel
-3. First successful result wins (with 500ms grace period for additional results)
-4. Sort by quality (best first)
-5. Special handling for: hex-encoded URLs, clock URLs, fast4speed direct URLs, embed URLs
-
-**Fixed providers** (ani-cli compatible):
-| Priority | Provider | Markers |
-|----------|----------|---------|
-| 1 | wixmp | `default` |
-| 2 | youtube | `yt-mp4`, `youtube` |
-| 3 | sharepoint | `s-mp4`, `sharepoint` |
-| 4 | filemoon | `fm-mp4`, `filemoon`, `fm-hls` |
-| 5 | hianime | `luf-mp4`, `hianime` |
+**Notes:**
+- The servers API needs hianime's internal `data-id`, not the episode number; it is resolved from the episode list.
+- The embed URL carries the MAL ID, which is why AniSkip and Jikan metadata keep working.
+- Playback requires a Referer header (`NeedsReferrer: true`); on Android it is rewritten by `player/proxy.go`.
 
 ### `extractor`
 
@@ -436,7 +414,7 @@ Stream URL extractors for various hosting providers. Each extractor handles a sp
 
 **Helpers:**
 - `NoSubtitlesExtractor` - Embed wrapper for extractors that don't support subtitles
-- `aes.go` - AES-256-CTR decryption used by AllAnime and some extractors
+- `aes.go` - AES-256-CTR decryption helper used by some extractors
 
 ### `player`
 
@@ -477,6 +455,7 @@ HTTP client wrapper that shells out to the `curl` binary instead of using `net/h
 - `Get(ctx, url, headers)` - GET request
 - `Post(ctx, url, headers, body)` - POST request
 - `PostRaw(ctx, url, headers, body)` - POST with raw bytes (for GraphQL)
+- `GetResolved(ctx, url, headers)` - GET with DNS pinned via raw UDP to 8.8.8.8/1.1.1.1 (bypasses filtered/broken system DNS)
 - `ParseJSONBody(data)` - Extract JSON from `{"data": ...}` wrapper
 
 This exists for PRoot/Termux compatibility where Go's `net/http` can have issues with DNS and TLS.
@@ -489,9 +468,9 @@ This exists for PRoot/Termux compatibility where Go's `net/http` can have issues
 ```
 1. User types query in TUI search bar
 2. TUI calls doSearch(query) → tea.Cmd
-3. Parallel: JikanProvider.Search(query) + AllanimeProvider.Search(query)
-4. Results merged (Jikan metadata + AllAnime IDs matched by name)
-5. TUI displays results in two-column layout
+3. HianimeProvider.Search(query) → hianime.at search page scrape
+4. One Jikan lookup for the same query → titles matched to fill MAL IDs
+5. Results sorted by match score; TUI displays them in two-column layout
 6. Batch: AniListClient.GetMediaBatch(malIDs) → metadata for all results
 7. Metadata cached in metadataCache for instant j/k navigation
 ```
@@ -499,11 +478,9 @@ This exists for PRoot/Termux compatibility where Go's `net/http` can have issues
 ### Episode Flow
 ```
 1. User selects anime → Enter
-2. AnimeLinker.GetEpisodes(anime, allanimeSrc)
-   a. If anime.AllAnimeID is empty:
-      - AnimeLinker.ResolveAllAnimeID() → search AllAnime by name, match MAL ID
-      - Result cached permanently in SQLite
-   b. AllanimeProvider.EpisodesOf(anime)
+2. HianimeProvider.EpisodesOf(anime)
+   a. Scrape /api/theme/episode/list/<showID> → episode numbers + data-ids
+   b. If anime.MALID is still 0: read it from the embed URL (/mal/<id>/)
 3. TUI displays episode list
 4. User navigates → Jikan episode metadata fetched on debounce (150ms)
 ```
@@ -511,13 +488,11 @@ This exists for PRoot/Termux compatibility where Go's `net/http` can have issues
 ### Playback Flow
 ```
 1. User selects episode → Enter
-2. AllanimeProvider.StreamsOf(episode)
-   a. AllAnimeClient.GetEpisodeSources() → list of source URLs
-   b. For each source URL (parallel, 10s timeout):
-      - Decode hex-encoded URLs
-      - Try registered extractors (5s per-extractor timeout)
-      - Return first playable m3u8/mp4 URLs
-   c. Sort by quality (best first)
+2. HianimeProvider.StreamsOf(episode)
+   a. Episode number → data-id (from the episode list)
+   b. Servers API → ZokoAnime embed URL (base64 data-hash)
+   c. Embed page → window.__P → base64 + XOR decode → m3u8 master URL
+   d. Master playlist → quality variants, sorted best first (Referer set)
 3. AniSkip.GetSkipTimes(malID, episodeNum) → skip intervals
 4. Player.Launch(stream.URL, Options{Title, Referrer, Subtitles, SkipTimes})
    a. Desktop: exec player binary with args
@@ -534,7 +509,7 @@ Both providers and extractors use Go's `init()` function + a `Register()` functi
 ```go
 // In provider/jikan/init.go
 func init() {
-    provider.Register(NewJikanProvider())
+    provider.Register(&provider.Provider{ID: "jikan", Name: "Jikan", CreateSource: ...})
 }
 
 // In extractor/hianime.go
@@ -547,8 +522,8 @@ func init() {
 All HTTP is done through `exec.Command("curl", ...)` rather than `net/http`. This is intentional for PRoot/Termux environments where Go's built-in HTTP client can have DNS and TLS issues.
 
 ### Parallel Stream Extraction
-Streams are extracted from multiple providers simultaneously:
-- All providers tried in parallel
+The extractor registry resolves embed/hosting pages to direct m3u8/mp4 URLs:
+- Extractors are tried in priority order per source URL
 - First successful result returned (with 500ms grace for additional results)
 - Per-extractor timeout of 5 seconds
 - Total extraction timeout of 10 seconds
@@ -607,7 +582,6 @@ ANILIX_PLAYER=vlc ANILIX_QUALITY=720p anilix
 | Path | Purpose |
 |------|---------|
 | `~/.anilix/anilix.toml` | Configuration file |
-| `~/.anilix/malid_cache.db` | SQLite cache for MAL ID → AllAnime ID mapping |
 | `~/.anilix/history.json` | Recent search history (last 10) |
 | `~/.anilix/ani-skip.lua` | mpv Lua script for auto-skip |
 
@@ -663,12 +637,12 @@ go test ./...
 # Run specific package tests
 go test ./source -v
 go test ./provider/jikan -v
-go test ./provider/allanime -v
+go test ./provider/hianime -v
 go test ./extractor -v
 go test ./player -v
 
 # Run integration tests (require network, skip with -short)
-go test ./provider/allanime -v -run TestIntegration -short=false
+go test ./provider/hianime -v -run TestIntegration -short=false
 go test ./provider/jikan -v -run TestIntegration -short=false
 go test ./extractor -v -run TestIntegration -short=false
 go test ./provider/anilist -v -run TestIntegration -short=false
@@ -687,7 +661,7 @@ GoReleaser (`.goreleaser.yml`) builds for:
 | desktop | linux, darwin, windows | amd64, arm64 |
 | termux | android | arm64 |
 
-Version is injected via ldflags: `-X github.com/hishantik/anilix/cmd.version={{ .Version }}`
+Version is injected via ldflags: `-X github.com/hishantik/anilix/version.Version={{ .Version }}`
 
 Archives: `.tar.gz` (Linux/macOS/Termux), `.zip` (Windows).
 

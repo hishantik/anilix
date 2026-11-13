@@ -9,8 +9,8 @@ import (
 
 	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/config"
-	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
+	"github.com/hishantik/anilix/provider/hianime"
 	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
 	"github.com/hishantik/anilix/update"
@@ -41,10 +41,9 @@ type SearchModel struct {
 	searchList  list.Model
 	episodeList list.Model
 
-	allanimeClient   *allanime.AllanimeClient
-	jikanClient      *jikan.JikanClient
-	anilistClient    *anilist.Client
-	allanimeProvider *allanime.AllanimeProvider
+	jikanClient     *jikan.JikanClient
+	anilistClient   *anilist.Client
+	hianimeProvider *hianime.Provider
 
 	prevState     tuiState
 	confirmSelect int
@@ -96,8 +95,8 @@ func NewSearchModel() *SearchModel {
 	if translationType == "" {
 		translationType = "sub"
 	}
-	allanimeProvider := allanime.NewAllanimeProvider()
-	allanimeProvider.SetTranslation(translationType)
+	hianimeProvider := hianime.NewProvider()
+	hianimeProvider.SetTranslation(translationType)
 
 	h := help.New()
 	hs := help.DefaultStyles(true)
@@ -117,9 +116,9 @@ func NewSearchModel() *SearchModel {
 	p.SetWidth(40)
 
 	return &SearchModel{
-		state:            searchState,
-		searchState:      NewSearchState(),
-		episodeState:     NewEpisodeState(),
+		state:        searchState,
+		searchState:  NewSearchState(),
+		episodeState: NewEpisodeState(),
 		settingsState: &SettingsState{
 			Quality: func() string {
 				q := config.GetString("quality")
@@ -137,10 +136,9 @@ func NewSearchModel() *SearchModel {
 		progress:             p,
 		searchList:           makeSearchList(km),
 		episodeList:          makeEpisodeList(km),
-		allanimeClient:       allanime.NewAllanimeClient(),
 		jikanClient:          jikan.NewClient("https://api.jikan.moe/v4"),
 		anilistClient:        anilist.NewClient(),
-		allanimeProvider:     allanimeProvider,
+		hianimeProvider:      hianimeProvider,
 		lastQuery:            "",
 		metadataCache:        make(map[int]*MetadataPanel),
 		episodeTitlesCache:   make(map[int][]string),
@@ -422,7 +420,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.progressTarget = 0.4
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
-					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
+					cmds = append(cmds, m.fetchEpisodes(selectedAnime))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -447,14 +445,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Selected = m.searchList.Index()
 				if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
 					anime := m.searchState.Results[m.searchState.Selected]
-					if anime.AllAnimeID != "" {
+					if anime.ShowID != "" {
 						m.state = detailState
 						m.textInput.Placeholder = "Search episode..."
-						m.episodeState.AnimeID = anime.AllAnimeID
+						m.episodeState.AnimeID = anime.ShowID
 						m.episodeState.Loading = true
 						m.progressPercent = 0
 						m.progressTarget = 0.4
-						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
+						cmds = append(cmds, m.fetchEpisodes(anime))
 						cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
 						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 							return progressTickMsg{}
@@ -469,7 +467,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.episodeState.Playing = true
 					m.progressPercent = 0
 					m.progressTarget = 0.5
-					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name, selectedAnime.MALID))
+					cmds = append(cmds, m.playEpisode(selectedAnime, selectedEpisode))
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -589,7 +587,18 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.Results) > 0 {
 			saveRecentSearch(m.lastQuery)
 			m.recentSearches = loadRecentSearches()
-			// Batch-fetch ALL metadata in one API call
+			// Resolve AniList/MAL IDs in the background, then batch-fetch the
+			// metadata for all results in a single API call. The Jikan
+			// fallback runs alongside and never delays the list.
+			cmds = append(cmds, m.resolveIDs(msg.Results))
+			cmds = append(cmds, m.enrichMALIDs(msg.Results, m.lastQuery))
+		}
+		m.updateSearchList()
+
+	case IDsResolvedMsg:
+		// IDs are filled in place; now the metadata batch can run.
+		m.searchState.Results = msg.Results
+		if len(msg.Results) > 0 {
 			m.searchState.MetadataLoading = true
 			m.loading = spinner.New()
 			m.loading.Spinner = spinner.Points
@@ -597,7 +606,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loading.Tick)
 			cmds = append(cmds, m.fetchMetadataBatch(msg.Results))
 		}
-		m.updateSearchList()
+
+	case MALIDsResolvedMsg:
+		// Apply the Jikan fallback IDs on the UI thread, but only where the
+		// AniList resolution did not already provide one.
+		for idx, malID := range msg.IDs {
+			if idx >= 0 && idx < len(m.searchState.Results) {
+				if m.searchState.Results[idx].MALID == 0 {
+					m.searchState.Results[idx].MALID = malID
+				}
+			}
+		}
 
 	case MetadataBatchLoadedMsg:
 		// Cache all metadata from the batch result

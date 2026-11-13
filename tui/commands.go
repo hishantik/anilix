@@ -19,49 +19,148 @@ import (
 	"github.com/hishantik/anilix/update"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/hishantik/anilix/provider/hianime"
 )
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
-	translationType := m.searchState.TranslationType
-	if translationType == "" {
-		translationType = "sub"
-	}
-	allanimeClient := m.allanimeClient
+	hianimeProvider := m.hianimeProvider
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		shows, err := allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
+		results, err := hianimeSearchResults(hianimeProvider, query)
 		if err != nil {
 			return SearchErrorMsg{Err: err}
 		}
-
-		results := make([]*source.Anime, 0, len(shows))
-		for _, show := range shows {
-			anime := allanimeClient.MapToAnime(&show)
-			results = append(results, anime)
-		}
-
-		queryLower := strings.ToLower(query)
-		sort.SliceStable(results, func(i, j int) bool {
-			nameI := strings.ToLower(results[i].Name)
-			nameJ := strings.ToLower(results[j].Name)
-			scoreI := matchScore(nameI, queryLower)
-			scoreJ := matchScore(nameJ, queryLower)
-			return scoreI > scoreJ
-		})
-
 		return SearchResultsMsg{Results: results}
 	}
+}
+
+// resolveIDs fills AniList and MAL IDs for search results in the background,
+// so the result list appears immediately instead of waiting for AniList.
+func (m *SearchModel) resolveIDs(results []*source.Anime) tea.Cmd {
+	anilistClient := m.anilistClient
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resolveAnimeIDs(ctx, anilistClient, results)
+		return IDsResolvedMsg{Results: results}
+	}
+}
+
+// enrichMALIDs resolves MAL IDs for titles AniList does not list verbatim,
+// using Jikan. It runs in the background and never blocks the result list or
+// the metadata batch.
+func (m *SearchModel) enrichMALIDs(results []*source.Anime, query string) tea.Cmd {
+	jikanClient := m.jikanClient
+
+	return func() tea.Msg {
+		if jikanClient == nil || jikanClient.IsDown() {
+			return MALIDsResolvedMsg{IDs: nil}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+
+		resp, err := jikanClient.SearchAnime(ctx, query)
+		if err != nil {
+			log.Printf("[anilix] jikan MALID enrichment failed: %v\n", err)
+			return MALIDsResolvedMsg{IDs: nil}
+		}
+
+		norm := func(s string) string {
+			return strings.ToLower(strings.TrimSpace(s))
+		}
+		ids := make(map[int]int)
+		for i, a := range results {
+			// Every title is looked up; the UI applies these IDs only to
+			// results that still have none, so this never races with the
+			// AniList resolution writing to the same results.
+			for _, d := range resp.Data {
+				if d.MalID == 0 {
+					continue
+				}
+				if norm(d.Title) == norm(a.Name) || norm(d.TitleEnglish) == norm(a.Name) {
+					ids[i] = d.MalID
+					break
+				}
+			}
+		}
+		return MALIDsResolvedMsg{IDs: ids}
+	}
+}
+
+// resolveAnimeIDs resolves AniList IDs (and MAL IDs) for the given results.
+//
+// AniList is the primary metadata provider: hianime gives no AniList ID, so
+// titles are matched against AniList, which also returns the MAL ID used for
+// AniSkip. Matching is exact-after-normalization, never fuzzy, because a
+// near-match would attach the wrong anime.
+func resolveAnimeIDs(ctx context.Context, anilistClient *anilist.Client, results []*source.Anime) {
+	if len(results) == 0 || anilistClient == nil {
+		return
+	}
+
+	titles := make([]string, 0, len(results))
+	for _, a := range results {
+		titles = append(titles, a.Name)
+	}
+
+	matches, err := anilistClient.ResolveByTitles(ctx, titles)
+	if err != nil {
+		log.Printf("[anilix] anilist id resolution failed: %v\n", err)
+		return
+	}
+	for i, m := range matches {
+		if m.Media == nil || i >= len(results) {
+			continue
+		}
+		results[i].AniListID = m.Media.ID
+		if m.Media.IDMal > 0 {
+			results[i].MALID = m.Media.IDMal
+		}
+	}
+}
+
+// anyMissingMAL reports whether some result still lacks a MAL ID.
+func anyMissingMAL(animes []*source.Anime) bool {
+	for _, a := range animes {
+		if a.MALID == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// hianimeSearchResults searches hianime. IDs (AniList/MAL) are resolved
+// separately in the background so results show up immediately.
+func hianimeSearchResults(hianimeProvider *hianime.Provider, query string) ([]*source.Anime, error) {
+	found, err := hianimeProvider.Search(query)
+	if err != nil || len(found) == 0 {
+		if err != nil {
+			log.Printf("[anilix] hianime search failed: %v\n", err)
+		}
+		return nil, err
+	}
+
+	queryLower := strings.ToLower(query)
+	sort.SliceStable(found, func(i, j int) bool {
+		nameI := strings.ToLower(found[i].Name)
+		nameJ := strings.ToLower(found[j].Name)
+		scoreI := matchScore(nameI, queryLower)
+		scoreJ := matchScore(nameJ, queryLower)
+		return scoreI > scoreJ
+	})
+
+	return found, nil
 }
 
 // fetchMetadataBatch fetches metadata for all results in a single AniList GraphQL call.
 func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 	// Collect all AniList IDs with their result index
 	type indexID struct {
-		Index      int
-		AniListID  int
+		Index     int
+		AniListID int
 	}
 	var pairs []indexID
 	for i, r := range results {
@@ -302,8 +401,8 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 			batch := anilistIDs[i:batchEnd]
 			batchCtx, batchCancel := context.WithTimeout(ctx, 10*time.Second)
 			if _, err := anilistClient.GetAnimeBatch(batchCtx, batch); err != nil && ctx.Err() == nil {
-			log.Printf("[anilix] prefetch batch failed: %v\n", err)
-		}
+				log.Printf("[anilix] prefetch batch failed: %v\n", err)
+			}
 			batchCancel()
 		}
 	}
@@ -369,30 +468,35 @@ func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
 
 }
 
-func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
+func (m *SearchModel) fetchEpisodes(anime *source.Anime) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
+	return m.fetchEpisodesHianime(anime, translationType)
+}
+
+// fetchEpisodesHianime lists episodes from hianime. The provider also
+// enriches anime.MALID from the embed URL in the background, which may
+// arrive after this command completes - later titles fetches still benefit.
+func (m *SearchModel) fetchEpisodesHianime(anime *source.Anime, translationType string) tea.Cmd {
 	searchSelected := m.searchState.Selected
-	allanimeClient := m.allanimeClient
+	hianimeProvider := m.hianimeProvider
 	jikanClient := m.jikanClient
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 
-		episodes, err := allanimeClient.GetShowEpisodes(ctx, showID, translationType)
+		hianimeProvider.SetTranslation(translationType)
+		eps, err := hianimeProvider.EpisodesOf(anime, 0)
 		if err != nil {
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
 
-		epList, ok := episodes[translationType]
-		if !ok {
-			epList, ok = episodes["sub"]
-			if !ok {
-				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: fmt.Errorf("no episodes found for %s", translationType)}
-			}
+		epList := make([]string, 0, len(eps))
+		for _, ep := range eps {
+			epList = append(epList, strconv.FormatFloat(ep.Number, 'f', -1, 64))
 		}
 
 		m.episodeTitlesCacheMu.Lock()
@@ -401,8 +505,9 @@ func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
 			episodeTitles = titles
 		}
 		m.episodeTitlesCacheMu.Unlock()
-		if len(episodeTitles) == 0 && malID > 0 {
-			jikanEpisodes, err := jikanClient.GetEpisodes(ctx, malID)
+		// MALID may have been enriched by EpisodesOf just now.
+		if len(episodeTitles) == 0 && anime.MALID > 0 {
+			jikanEpisodes, err := jikanClient.GetEpisodes(ctx, anime.MALID)
 			if err == nil && len(jikanEpisodes) > 0 {
 				episodeTitles = make([]string, len(jikanEpisodes))
 				for i, ep := range jikanEpisodes {
@@ -481,28 +586,24 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 	}
 }
 
-func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID int) tea.Cmd {
+func (m *SearchModel) playEpisode(anime *source.Anime, episodeNum string) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
-	allanimeProvider := m.allanimeProvider
+	hianimeProvider := m.hianimeProvider
 	aniskipEnabled := m.settingsState.AniskipEnabled
 	quality := m.settingsState.Quality
+	animeTitle := ""
+	if anime != nil {
+		animeTitle = anime.Name
+	}
 
 	return func() tea.Msg {
-		allanimeProvider.SetTranslation(translationType)
-
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
-		episode := &source.Episode{
-			Number: episodeNumFloat,
-			Anime: &source.Anime{
-				AllAnimeID: showID,
-				Name:       animeTitle,
-			},
-		}
 
-		streams, err := allanimeProvider.StreamsOf(episode)
+		hianimeProvider.SetTranslation(translationType)
+		streams, err := hianimeProvider.StreamsOf(&source.Episode{Number: episodeNumFloat, Anime: anime})
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
 		}
@@ -512,9 +613,9 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 		}
 
 		var skipTimes []aniskip.SkipInterval
-		if aniskipEnabled && malID > 0 {
+		if aniskipEnabled && anime != nil && anime.MALID > 0 {
 			epNum, _ := strconv.Atoi(episodeNum)
-			if times, err := aniskip.GetSkipTimes(malID, epNum); err == nil {
+			if times, err := aniskip.GetSkipTimes(anime.MALID, epNum); err == nil {
 				skipTimes = times
 			}
 		}

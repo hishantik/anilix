@@ -43,16 +43,16 @@ func (j *JikanProvider) Search(query string) ([]*source.Anime, error) {
 
 func (j *JikanProvider) mapToAnime(data *AnimeData) *source.Anime {
 	anime := &source.Anime{
-		Name:       data.TitleEnglish,
-		URL:        data.URL,
-		MALID:      data.MalID,
-		Status:     data.Status,
+		Name:         data.TitleEnglish,
+		URL:          data.URL,
+		MALID:        data.MalID,
+		Status:       data.Status,
 		EpisodeCount: data.Episodes,
-		Type:       data.Type,
-		Rating:     data.Rating,
-		Score:      data.Score,
-		Rank:       data.Rank,
-		Popularity: data.Popularity,
+		Type:         data.Type,
+		Rating:       data.Rating,
+		Score:        data.Score,
+		Rank:         data.Rank,
+		Popularity:   data.Popularity,
 	}
 
 	if anime.Name == "" {

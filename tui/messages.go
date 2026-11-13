@@ -9,6 +9,18 @@ type SearchResultsMsg struct {
 	Results []*source.Anime
 }
 
+// IDsResolvedMsg carries search results whose AniList/MAL IDs have been
+// resolved in the background.
+type IDsResolvedMsg struct {
+	Results []*source.Anime
+}
+
+// MALIDsResolvedMsg carries MAL IDs resolved by the Jikan fallback, keyed by
+// result index.
+type MALIDsResolvedMsg struct {
+	IDs map[int]int
+}
+
 type SearchErrorMsg struct {
 	Err error
 }

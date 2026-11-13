@@ -9,12 +9,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const (
-	BaseURL    = "https://graphql.anilist.co"
-	RateLimit  = 10 // requests per second (AniList is generous)
-	UserAgent  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	BaseURL   = "https://graphql.anilist.co"
+	RateLimit = 10 // requests per second (AniList is generous)
+	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
 
 type Client struct {
@@ -217,6 +218,132 @@ func (c *Client) GetAnimeBatch(ctx context.Context, ids []int) (map[int]*MediaDa
 	}
 
 	return results, nil
+}
+
+// ResolveByTitles resolves several titles to AniList entries using a single
+// GraphQL request (aliased Page fields, one per title).
+//
+// It is used to attach AniList IDs and MAL IDs to search results: AniList
+// entries carry both, so one request gives the TUI everything it needs for
+// metadata and AniSkip. Only exact title matches are accepted - a fuzzy
+// match could attach the wrong anime (e.g. "Mushishi: The Next Chapter" vs
+// "MUSHI-SHI The Next Passage"), so unmatched titles are simply left empty.
+func (c *Client) ResolveByTitles(ctx context.Context, titles []string) ([]TitleMatch, error) {
+	matches := make([]TitleMatch, len(titles))
+	for i, t := range titles {
+		matches[i].Query = t
+	}
+	if len(titles) == 0 {
+		return matches, nil
+	}
+
+	// Keep requests within reasonable GraphQL complexity limits.
+	const chunkSize = 10
+	for start := 0; start < len(titles); start += chunkSize {
+		end := start + chunkSize
+		if end > len(titles) {
+			end = len(titles)
+		}
+		chunk, err := c.resolveTitleChunk(ctx, titles[start:end])
+		if err != nil {
+			return matches, err
+		}
+		for i, m := range chunk {
+			matches[start+i] = m
+		}
+	}
+	return matches, nil
+}
+
+// resolveTitleChunk resolves one chunk of titles in a single request.
+func (c *Client) resolveTitleChunk(ctx context.Context, titles []string) ([]TitleMatch, error) {
+	c.rateLimiter.waitForToken()
+
+	var queryParts []string
+	var varParts []string
+	variables := make(map[string]interface{})
+
+	for i, t := range titles {
+		alias := fmt.Sprintf("p%d", i)
+		queryParts = append(queryParts, fmt.Sprintf("%s: Page(page: 1, perPage: 10) { media(search: $t%d, type: ANIME) { id idMal title { romaji english native } synonyms format episodes coverImage { extraLarge } startDate { year } } }", alias, i))
+		varParts = append(varParts, fmt.Sprintf("$t%d: String", i))
+		variables[fmt.Sprintf("t%d", i)] = t
+	}
+
+	query := fmt.Sprintf("query (%s) { %s }", strings.Join(varParts, ", "), strings.Join(queryParts, " "))
+
+	resp, err := c.doGraphQL(ctx, query, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(resp, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	matches := make([]TitleMatch, len(titles))
+	for i, t := range titles {
+		matches[i].Query = t
+
+		alias := fmt.Sprintf("p%d", i)
+		page, ok := rawResp[alias].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		media, ok := page["media"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, entry := range media {
+			dataBytes, _ := json.Marshal(entry)
+			var m MediaData
+			if err := json.Unmarshal(dataBytes, &m); err != nil || m.ID == 0 {
+				continue
+			}
+			if titleMatches(t, &m) {
+				copied := m
+				matches[i].Media = &copied
+				break
+			}
+		}
+	}
+	return matches, nil
+}
+
+// titleMatches reports whether the entry's title is the queried title.
+// Comparison is case/space/punctuation insensitive and also considers
+// synonyms, but never accepts a merely similar title.
+func titleMatches(query string, media *MediaData) bool {
+	q := normalizeTitle(query)
+	if q == "" {
+		return false
+	}
+	for _, t := range []string{media.Title.English, media.Title.Romaji, media.Title.Native} {
+		if t != "" && normalizeTitle(t) == q {
+			return true
+		}
+	}
+	for _, s := range media.Synonyms {
+		if s != "" && normalizeTitle(s) == q {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeTitle lowercases a title and keeps only letters and digits, so
+// "ONE PIECE" and "One Piece!" compare equal. Unicode-aware on purpose:
+// AniList uses typographic punctuation ("Journey's End" with U+2019) while
+// other sources use plain ASCII, and both must match.
+func normalizeTitle(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (c *Client) doGraphQL(ctx context.Context, query string, variables map[string]interface{}) ([]byte, error) {
