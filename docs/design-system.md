@@ -17,10 +17,10 @@ application.
 1. **Tokens first, pixels second.** A screen never names a colour. It asks for a
    *role* — `theme.Primary`, `theme.SurfaceVariant` — and the theme decides
    what that role looks like on the terminal it is running on.
-2. **Material 3 semantics, cyberpunk identity.** Material 3's role model
-   (surface / onSurface, primary / onPrimary / primaryContainer) provides the
-   structure; Anilix's palette provides the character. The structure is what
-   makes the app coherent, the palette is what makes it *Anilix*.
+2. **Material Design 3.** Material 3's role model (surface / onSurface,
+   primary / onPrimary / primaryContainer) and dark baseline palette provide
+   both the structure and the visual character: modern, clean, comfortable
+   to read, and free of decorative clutter.
 3. **A terminal has one font size.** Hierarchy is expressed with weight,
    colour, case and spacing — never with a point size. Every "bigger" element
    is a different *role*, not a bigger font.
@@ -90,8 +90,8 @@ for?", so a palette change never requires touching a screen.
 |---|---|---|
 | `background` | `#111318` | The canvas behind everything |
 | `surface` | `#1C2028` | Cards, panels, list containers |
-| `surface-variant` | `#292D36` | Selected rows, raised controls, chips |
-| `surface-high` | `#232833` | Dialogs, drawers, menus (elevation 3) |
+| `surface-variant` | `#20242C` | Selected rows, raised controls, chips (surface container) |
+| `surface-high` | `#292D36` | Dialogs, drawers, menus (surface container high) |
 | `surface-low` | `#171B21` | Wells, input fields, recessed areas |
 | `scrim` | `#0A0C10` | Dimming behind a modal |
 
@@ -99,31 +99,31 @@ for?", so a palette change never requires touching a screen.
 
 | Role | Value | Use |
 |---|---|---|
-| `primary` | `#B9A2FF` | Focus, selection, primary action |
-| `on-primary` | `#1A1330` | Text on `primary` |
-| `primary-hover` | `#C7B4FF` | Hover state of a primary action |
-| `primary-pressed` | `#9E85E8` | Pressed state of a primary action |
-| `primary-container` | `#2E2550` | Chips, badges, tonal fills |
-| `on-primary-container` | `#D9CFFF` | Text on `primary-container` |
-| `secondary` | `#80CBC4` | Supporting accent: quality, status, "live" |
-| `on-secondary` | `#10312E` | Text on `secondary` |
-| `secondary-container` | `#1B3A37` | Tonal fills |
-| `on-secondary-container` | `#B2E9E2` | Text on `secondary-container` |
-| `tertiary` | `#F2B8D5` | Third accent, used sparingly (scores, favourites) |
-| `on-tertiary` | `#3A2130` | Text on `tertiary` |
-| `tertiary-container` | `#402A38` | Tonal fills |
-| `on-tertiary-container` | `#F6D3E5` | Text on `tertiary-container` |
+| `primary` | `#D0BCFF` | Focus, selection, primary action |
+| `on-primary` | `#381E72` | Text on `primary` |
+| `primary-hover` | `#DCC7FF` | Hover state of a primary action |
+| `primary-pressed` | `#B69EFF` | Pressed state of a primary action |
+| `primary-container` | `#4F378B` | Chips, badges, tonal fills |
+| `on-primary-container` | `#EADDFF` | Text on `primary-container` |
+| `secondary` | `#CCC2DC` | Supporting accent: quality, status, "live" |
+| `on-secondary` | `#332D41` | Text on `secondary` |
+| `secondary-container` | `#33304A` | Tonal fills |
+| `on-secondary-container` | `#E8DEF8` | Text on `secondary-container` |
+| `tertiary` | `#EFB8C8` | Third accent, used sparingly (scores, favourites) |
+| `on-tertiary` | `#492A43` | Text on `tertiary` |
+| `tertiary-container` | `#633B48` | Tonal fills |
+| `on-tertiary-container` | `#FFD8E4` | Text on `tertiary-container` |
 
 ### 3.3 Status
 
 | Role | Value | Use |
 |---|---|---|
 | `error` | `#F2B8B5` | Failures, destructive actions |
-| `on-error` | `#3A1A19` | Text on `error` |
-| `error-container` | `#4A2624` | Error chips and banners |
-| `on-error-container` | `#F8DAD8` | Text on `error-container` |
+| `on-error` | `#601410` | Text on `error` |
+| `error-container` | `#8C1D18` | Error chips and banners |
+| `on-error-container` | `#F9DEDC` | Text on `error-container` |
 | `success` | `#86D9A4` | Confirmations, connected accounts |
-| `on-success` | `#10301C` | Text on `success` |
+| `on-success` | `#003919` | Text on `success` |
 | `warning` | `#F5C26B` | Cautionary states |
 | `on-warning` | `#3A2B10` | Text on `warning` |
 
@@ -131,10 +131,10 @@ for?", so a palette change never requires touching a screen.
 
 | Role | Value | Use |
 |---|---|---|
-| `text` | `#E3E1E9` | Primary reading text |
-| `muted` | `#C4C6D0` | Secondary text, descriptions |
+| `text` | `#E6E1E5` | Primary reading text (on-surface) |
+| `muted` | `#CAC4D0` | Secondary text, descriptions (on-surface-variant) |
 | `disabled` | `#6A6E7A` | Unavailable content, hints, captions |
-| `outline` | `#3A3F4B` | Container borders, strong dividers |
+| `outline` | `#938F99` | Container borders, strong dividers |
 | `outline-variant` | `#262B33` | Subtle dividers, card borders |
 
 `role-unset` (`theme.RoleUnset`) is the zero value of a role: it means "no

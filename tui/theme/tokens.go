@@ -2,10 +2,11 @@
 // tokens, a typography scale, spacing and shape rules, and the reusable
 // component styles the TUI renders with.
 //
-// The palette follows Material Design 3's role model (surface / onSurface,
-// primary / onPrimary, ...) on top of Anilix's cyberpunk identity, and is
-// tuned for a dark terminal. Terminals have a single font size, so hierarchy
-// is expressed with weight, colour, case and spacing rather than size.
+// The palette follows Material Design 3's dark theme role model (surface /
+// onSurface, primary / onPrimary, ...) using the MD3 baseline colours, and
+// is tuned for a dark terminal. Terminals have a single font size, so
+// hierarchy is expressed with weight, colour, case and spacing rather than
+// size.
 //
 // Colours degrade for terminals with less capability: the detected
 // colorprofile is used to downsample truecolor values to 256 or 16 colours,
@@ -106,50 +107,50 @@ const (
 // The base values are the reference palette; the derived ones are computed
 // from it so the system stays internally consistent when the base moves.
 var hex = map[Role]string{
-	// Base surfaces
+	// Base surfaces — Material Design 3 dark theme
 	Background:     "#111318",
 	Surface:        "#1C2028",
-	SurfaceVariant: "#292D36",
-	SurfaceHigh:    "#232833",
+	SurfaceVariant: "#20242C",
+	SurfaceHigh:    "#292D36",
 	SurfaceLow:     "#171B21",
 
-	// Lines
-	Outline:        "#3A3F4B",
+	// Lines — spec Outline on dark surfaces
+	Outline:        "#938F99",
 	OutlineVariant: "#262B33",
 
-	// Primary accent
-	Primary:            "#B9A2FF",
-	OnPrimary:          "#1A1330",
-	PrimaryHover:       "#C7B4FF",
-	PrimaryPressed:     "#9E85E8",
-	PrimaryContainer:   "#2E2550",
-	OnPrimaryContainer: "#D9CFFF",
+	// Primary accent — spec baseline (#D0BCFF), tonal container computed
+	Primary:            "#D0BCFF",
+	OnPrimary:          "#381E72",
+	PrimaryHover:       "#DCC7FF",
+	PrimaryPressed:     "#B69EFF",
+	PrimaryContainer:   "#4F378B",
+	OnPrimaryContainer: "#EADDFF",
 
-	// Secondary accent
-	Secondary:            "#80CBC4",
-	OnSecondary:          "#10312E",
-	SecondaryContainer:   "#1B3A37",
-	OnSecondaryContainer: "#B2E9E2",
+	// Secondary accent — spec baseline (#CCC2DC)
+	Secondary:            "#CCC2DC",
+	OnSecondary:          "#332D41",
+	SecondaryContainer:   "#33304A",
+	OnSecondaryContainer: "#E8DEF8",
 
-	// Tertiary accent
-	Tertiary:            "#F2B8D5",
-	OnTertiary:          "#3A2130",
-	TertiaryContainer:   "#402A38",
-	OnTertiaryContainer: "#F6D3E5",
+	// Tertiary accent — spec baseline (#EFB8C8)
+	Tertiary:            "#EFB8C8",
+	OnTertiary:          "#492A43",
+	TertiaryContainer:   "#633B48",
+	OnTertiaryContainer: "#FFD8E4",
 
 	// Status
 	Error:            "#F2B8B5",
-	OnError:          "#3A1A19",
-	ErrorContainer:   "#4A2624",
-	OnErrorContainer: "#F8DAD8",
+	OnError:          "#601410",
+	ErrorContainer:   "#8C1D18",
+	OnErrorContainer: "#F9DEDC",
 	Success:          "#86D9A4",
-	OnSuccess:        "#10301C",
+	OnSuccess:        "#003919",
 	Warning:          "#F5C26B",
 	OnWarning:        "#3A2B10",
 
 	// Text
-	Text:     "#E3E1E9",
-	Muted:    "#C4C6D0",
+	Text:     "#E6E1E5",
+	Muted:    "#CAC4D0",
 	Disabled: "#6A6E7A",
 
 	// Overlay

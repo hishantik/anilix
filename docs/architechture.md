@@ -1,6 +1,6 @@
 # Anilix - Project Documentation
 
-A cyberpunk-themed terminal anime streaming client written in Go. Search anime, browse episodes, and stream directly from your terminal.
+A terminal anime streaming client written in Go, styled with Material Design 3. Search anime, browse episodes, and stream directly from your terminal.
 
 ---
 
@@ -314,7 +314,7 @@ Bubble Tea v2 terminal UI with an Elm architecture state machine.
 4. `settingsState` - Settings popup (quality cycling, aniskip toggle)
 
 **Key components of `SearchModel`:**
-- `textInput` - Search input with cyberpunk styling
+- `textInput` - Search input styled from the design system
 - `searchList` / `episodeList` - Bubbles list components
 - `loading` - Spinner for async operations
 `progress` - Progress bar with smooth animation

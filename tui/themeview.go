@@ -79,7 +79,7 @@ func themeShowcaseLines() []string {
 	blank := func() { lines = append(lines, "") }
 
 	add(theme.Headline.Render("Anilix Design System"))
-	add(theme.Label.Render("Material 3 principles · cyberpunk identity · dark terminal"))
+	add(theme.Label.Render("Material Design 3 · dark baseline · keyboard-driven terminal"))
 	blank()
 
 	// --- Capabilities -------------------------------------------------

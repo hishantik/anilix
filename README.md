@@ -5,7 +5,7 @@
 <h1 align="center">Anilix</h1>
 
 <p align="center">
-  A cyberpunk-themed terminal anime streaming client written in Go.<br/>
+  A Material Design 3 terminal anime streaming client written in Go.<br/>
   Search anime, browse episodes, and stream directly from your terminal.<br/>
 </p>
   
