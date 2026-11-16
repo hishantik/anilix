@@ -49,6 +49,53 @@ mkdir -p /tmp/anilix-build && cp -r . /tmp/anilix-build/ && cd /tmp/anilix-build
 - Config via Viper at `~/.anilix/anilix.toml`; env overrides use `ANILIX_` prefix (e.g. `ANILIX_PLAYER=vlc`).
 - CLI: `anilix` (TUI, default), `anilix sources`, `anilix version`, `anilix anilist login|logout|status`.
 
+## Version Control — Strict Rules
+
+These rules are **non-negotiable**. Violations caused the loss of 7 commits in a previous session.
+
+### Commit and push after every phase
+
+After completing **each phase** of any multi-phase task, immediately commit and push before starting the next phase. A phase is not complete until the remote has it.
+
+```sh
+git add -A && git status --short
+git commit -m "$(cat <<'EOF'
+type: concise commit message describing the phase
+
+What changed and why it matters.
+EOF
+)"
+git push
+```
+
+### Never run destructive commands without verifying the path first
+
+Never use `rm -rf` with a path that contains `~` or `$HOME` inside a PRoot/Termux environment, because `~` resolves to the actual home directory. Always use absolute paths.
+
+```sh
+# WRONG — deletes ~/anilix instead of the intended temp dir:
+rm -rf /tmp/anilix-build ~/anilix
+
+# RIGHT — absolute paths, never globbed:
+rm -rf /data/data/com.termux/files/usr/tmp/anilix-build
+```
+
+### Keep the remote as the source of truth
+
+Every meaningful change must be pushed before the session ends. A commit that exists only locally is not a commit — it is a draft. If the remote does not have it, it is not done.
+
+### Build verification before push
+
+Before pushing, verify the build succeeds in PRoot to catch filesystem-lock issues early:
+
+```sh
+mkdir -p /data/data/com.termux/files/usr/tmp/anilix-build && \
+  cp -r . /data/data/com.termux/files/usr/tmp/anilix-build/ && \
+  cd /data/data/com.termux/files/usr/tmp/anilix-build && \
+  go build -o /data/data/com.termux/files/usr/tmp/anilix-bin . && \
+  rm -rf /data/data/com.termux/files/usr/tmp/anilix-build /data/data/com.termux/files/usr/tmp/anilix-bin
+```
+
 ## Release
 
 GoReleaser on `v*` tags (`.github/workflows/release.yml`): desktop (linux/darwin/windows amd64+arm64) plus a separate termux/android arm64 build, `CGO_ENABLED=0`.
