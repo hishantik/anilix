@@ -23,7 +23,6 @@ type Protocol int
 const (
 	ProtocolNone      Protocol = iota // No image: the framed text placeholder
 	ProtocolKitty                     // Kitty graphics protocol via Unicode placeholders
-	ProtocolSixel                     // SIXEL, in-band (terminals that put images in the grid)
 	ProtocolITerm2                    // iTerm2 inline images (OSC 1337)
 	ProtocolHalfBlock                 // ANSI half-block characters (SGR, works everywhere)
 	ProtocolChafa                     // chafa unicode art (universal fallback)

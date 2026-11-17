@@ -538,20 +538,20 @@ func TestTheRendererSettingIsWired(t *testing.T) {
 		t.Errorf("the choice wrapped to %q, want auto", got)
 	}
 
-	// SIXEL is a first-class choice now that it renders through chafa.
+	// half-block follows auto in the cycle.
 	found := false
 	for _, c := range rendererChoices {
-		if c == "sixel" {
+		if c == "halfblock" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("SIXEL is missing from the renderer choices")
+		t.Error("half-block is missing from the renderer choices")
 	}
 	m.settingsAdjust(false)
-	if got := rendererChoice(); got != "sixel" {
-		t.Errorf("stepping from auto reached %q, want sixel", got)
+	if got := rendererChoice(); got != "halfblock" {
+		t.Errorf("stepping from auto reached %q, want halfblock", got)
 	}
 }
 

@@ -79,7 +79,6 @@ type CoverImageLoadedMsg struct {
 	Rendered         string // Rendered image (SGR half-block or Unicode placeholder text)
 	KittyTransmitSeq string // APC sequence for Kitty graphics (empty for non-Kitty)
 	KittyImageID     uint32 // Image ID for Kitty graphics cleanup
-	SixelSeq         string // DCS sixel sequence for tea.Raw (empty for non-Sixel)
 	Index            int    // Result index this cover belongs to
 	URL              string // The URL the cover was downloaded from, so a late answer for an old entry is recognised
 	Width            int    // The width the cover was rendered at

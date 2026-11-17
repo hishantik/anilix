@@ -233,11 +233,9 @@ func newProgress() progress.Model {
 }
 
 func (m *SearchModel) Init() tea.Cmd {
-	// Ask the terminal what it can draw. The answer carries the SIXEL bit
-	// where the terminal speaks the protocol - Termux advertises its
-	// graphics support this way - and decides whether a configured SIXEL
-	// renderer is honoured. A terminal that does not answer simply keeps
-	// the renderers the environment already proves.
+	// Ask the terminal about its capabilities; the answer is recorded by
+	// HandlePrimaryDeviceAttributes. A terminal that does not answer
+	// simply keeps the renderers the environment already proves.
 	return tea.Raw(ansi.RequestPrimaryDeviceAttributes)
 }
 
@@ -246,9 +244,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case uv.PrimaryDeviceAttributesEvent:
-		// The terminal answered the capability query. Attribute 4 is the
-		// SIXEL bit - the way Termux advertises its graphics support.
-		// When the answer changes the chain, the artwork on screen is
+		// The terminal answered the capability query. Device attributes
+		// are no longer used to pick a renderer, so the answer is ignored.
+		// When it would change the chain, the artwork on screen would be
 		// redrawn with the better protocol.
 		if HandlePrimaryDeviceAttributes(msg) {
 			return m, m.refreshCoverForProtocolChange()
@@ -965,10 +963,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Metadata.CoverWidth = msg.Width
 				m.searchState.Metadata.CoverRows = msg.Rows
 			}
-			// For Kitty and SIXEL protocols the image is transmitted outside
-			// the view text: the ultraviolet renderer strips sequences it
-			// cannot read (APC/DCS), so tea.Raw() sends them directly to the
-			// terminal. Delete the old image first, then transmit the new.
+			// For Kitty protocol the image is transmitted outside the view
+			// text: the ultraviolet renderer strips sequences it cannot read
+			// (APC), so tea.Raw() sends them directly to the terminal. Delete
+			// the old image first, then transmit the new.
 			if msg.KittyTransmitSeq != "" {
 				oldID := m.kittyImageID
 				m.kittyImageID = msg.KittyImageID
@@ -976,9 +974,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					DeleteKittyImageCmd(oldID),
 					tea.Raw(msg.KittyTransmitSeq),
 				)
-			}
-			if msg.SixelSeq != "" {
-				cmds = append(cmds, tea.Raw(msg.SixelSeq))
 			}
 		}
 

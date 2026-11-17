@@ -5,7 +5,6 @@ import (
 	"image"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/hishantik/anilix/config"
 )
@@ -23,21 +22,18 @@ import (
 // the framed text placeholder of ui.Artwork. A terminal that cannot show
 // a picture gets that placeholder, never a blank hole.
 //
-// SIXEL and iTerm2 inline images are deliberately absent from the
-// detected chain. Both draw over the text grid of terminals that keep
-// images outside of it, which breaks a full-screen interface on repaint.
-// They are opt-in through the configuration, and the configuration is
-// only honoured when the terminal actually advertises the protocol: a
-// converter on the PATH is not a terminal capability. The advertisement
-// the renderer trusts is the terminal's own answer to the device
-// attributes query - Termux sets the SIXEL bit there in the builds that
-// carry its graphics support - or, failing that, a terminal name that is
-// specific about SIXEL.
+// iTerm2 inline images are deliberately absent from the detected chain.
+// They draw over the text grid of terminals that keep images outside of
+// it, which breaks a full-screen interface on repaint. iTerm2 is opt-in
+// through the configuration, and the configuration is only honoured when
+// the terminal actually advertises the protocol: a converter on the PATH
+// is not a terminal capability. The advertisement the renderer trusts is
+// the terminal's program name (iTerm.app, WezTerm), or a terminal name
+// that is specific about the protocol.
 
 // rendererNames maps the words the configuration uses to the protocols.
 var rendererNames = map[string]Protocol{
 	"kitty":     ProtocolKitty,
-	"sixel":     ProtocolSixel,
 	"iterm2":    ProtocolITerm2,
 	"halfblock": ProtocolHalfBlock,
 	"chafa":     ProtocolChafa,
@@ -59,53 +55,9 @@ func configuredRenderer() (Protocol, bool) {
 	return p, ok
 }
 
-// The terminal's own word about what it can draw.
+// The renderer that draws a picture when the configuration asks for a
+// specific one.
 //
-// Terminals answer the primary device attributes query (DA1, "CSI c") with
-// a list of attributes, and attribute 4 is the SIXEL bit. Termux advertises
-// its graphics support this way in the builds that carry it, and so does
-// every other implementation that speaks the protocol. The answer is the
-// strongest evidence the renderer accepts: a converter on the PATH is not
-// a capability, and a terminal name claims nothing unless it is specific.
-var da1Sixel atomic.Bool
-
-// HandlePrimaryDeviceAttributes records what the terminal reported in its
-// answer to the DA1 query. It reports whether the answer changed what the
-// renderer knows, so the artwork on screen can be redrawn with the better
-// protocol the terminal just revealed.
-func HandlePrimaryDeviceAttributes(attrs []int) bool {
-	sawSixel := false
-	for _, a := range attrs {
-		if a == 4 {
-			sawSixel = true
-			break
-		}
-	}
-
-	wasSixel := da1Sixel.Load()
-	if sawSixel {
-		da1Sixel.Store(true)
-		// A SIXEL attempt that failed before the terminal answered was
-		// made under wrong assumptions: give the protocol another chance.
-		renderFailuresMu.Lock()
-		delete(renderFailures, ProtocolSixel)
-		renderFailuresMu.Unlock()
-	}
-	return sawSixel != wasSixel
-}
-
-// sixelAdvertised reports whether the terminal answered the DA1 query with
-// the SIXEL attribute.
-func sixelAdvertised() bool {
-	return da1Sixel.Load()
-}
-
-// resetDeviceAttributes forgets the evidence of the capability query. It
-// exists for the tests.
-func resetDeviceAttributes() {
-	da1Sixel.Store(false)
-}
-
 // protocolDetected reports whether the terminal advertises a protocol.
 //
 // This is the "verify before enabling" step: a configured renderer is
@@ -114,8 +66,6 @@ func protocolDetected(p Protocol) bool {
 	switch p {
 	case ProtocolKitty:
 		return DetectKittySupport()
-	case ProtocolSixel:
-		return DetectSixelSupport()
 	case ProtocolITerm2:
 		return DetectITerm2Support()
 	case ProtocolHalfBlock:
@@ -124,6 +74,13 @@ func protocolDetected(p Protocol) bool {
 		return hasBinary("chafa")
 	}
 	return true
+}
+
+// HandlePrimaryDeviceAttributes records what the terminal reported in its
+// answer to the DA1 query. The in-band protocols the answer used to
+// reveal are gone, so this is a no-op kept for its call site in Init.
+func HandlePrimaryDeviceAttributes(_ []int) bool {
+	return false
 }
 
 // detectedChain returns the protocols the terminal can do, best first.
@@ -208,14 +165,13 @@ func resetRenderFailures() {
 type ArtworkRender struct {
 	Placeholder  string // the text of the view
 	TransmitSeq  string // the APC sequence for tea.Raw (Kitty only)
-	SixelSeq     string // the DCS sixel sequence for tea.Raw
 	KittyImageID uint32
 	Protocol     Protocol
 }
 
 // The artwork rendered during this session.
 //
-// The half-block, chafa, SIXEL and iTerm2 output is self-contained text:
+// The half-block, chafa and iTerm2 output is self-contained text:
 // the same cover at the same size always renders to the same string, so
 // it is kept instead of re-encoded. The Kitty output is not cached: it
 // references an image in the memory of the terminal, and the screen
@@ -276,7 +232,7 @@ func RenderAdaptive(img image.Image, cols, rows int, cachePath, coverURL string)
 				return hit
 			}
 			result := renderWithProtocol(img, p, cols, rows, cachePath)
-			if result.Placeholder == "" && result.SixelSeq == "" {
+			if result.Placeholder == "" {
 				markProtocolFailed(p)
 				continue
 			}
@@ -319,18 +275,6 @@ func renderWithProtocol(img image.Image, p Protocol, cols, rows int, cachePath s
 		// the terminal has true colour, and the fallback for the rest is
 		// the placeholder - never a renderer the chain did not choose.
 		return ArtworkRender{Placeholder: placeholder, Protocol: p}
-	case ProtocolSixel:
-		// The sixel stream is a DCS sequence, and the ultraviolet
-		// renderer strips sequences it cannot read out of the view text -
-		// the way it strips the APC of the kitty protocol. The sixel
-		// travels to the terminal through tea.Raw instead, like the
-		// kitty image. The placeholder keeps the shape of the poster in
-		// the frame while the sixel draws the picture.
-		return ArtworkRender{
-			SixelSeq:    renderSixelCover(img, cols, rows),
-			Placeholder: sixelPlaceholder(cols, rows),
-			Protocol:    p,
-		}
 	case ProtocolITerm2:
 		return ArtworkRender{Placeholder: renderITerm2Cover(img, cols, rows), Protocol: p}
 	}

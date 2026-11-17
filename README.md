@@ -283,7 +283,7 @@ anilix anilist logout   # Logout from AniList
   </tr>
   <tr>
     <td align="center"><code>artwork.renderer</code></td>    <td align="center"><code>auto</code></td>
-    <td align="center">Cover-art renderer (<code>auto</code>, <code>kitty</code>, <code>sixel</code>, <code>iterm2</code>, <code>halfblock</code>, <code>chafa</code>, <code>ascii</code>/<code>none</code>). Configured renderers are only honoured when the terminal actually advertises them — the app queries the terminal's device attributes at startup, so SIXEL works on Termux builds that carry graphics support (<code>apt sixel</code> is not evidence); a renderer that fails is skipped for the session.</td>
+    <td align="center">Cover-art renderer (<code>auto</code>, <code>kitty</code>, <code>iterm2</code>, <code>halfblock</code>, <code>chafa</code>, <code>ascii</code>/<code>none</code>). Configured renderers are only honoured when the terminal actually advertises them — a converter on the PATH is not a terminal capability; a renderer that fails is skipped for the session.</td>
   </tr>
 </table>
 
