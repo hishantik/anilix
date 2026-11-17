@@ -83,6 +83,16 @@ func HasUnicode() bool {
 	return unicode
 }
 
+// SetUnicode overrides the detected unicode capability.
+//
+// It exists for the same reason as SetProfile: tests and the showcase run
+// without a terminal, and the fallback path of a terminal that cannot draw
+// box characters has to be reproducible.
+func SetUnicode(ok bool) {
+	Profile()
+	unicode = ok
+}
+
 // HasColor reports whether the terminal can display colour at all.
 func HasColor() bool {
 	return Profile() > colorprofile.ASCII

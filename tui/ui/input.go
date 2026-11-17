@@ -44,7 +44,7 @@ func (f InputField) Render() string {
 
 	body := f.Content
 	if lipgloss.Width(body) == 0 {
-		body = theme.Fg(lipgloss.NewStyle(), theme.Disabled).Render(f.Placeholder)
+		body = theme.Fg(lipgloss.NewStyle(), theme.Muted).Render(f.Placeholder)
 	}
 
 	style := theme.Bg(lipgloss.NewStyle().Padding(0, 1), theme.SurfaceLow).

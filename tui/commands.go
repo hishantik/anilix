@@ -881,12 +881,17 @@ func stripHTML(s string) string {
 }
 
 func truncateSynopsis(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	lastSpace := strings.LastIndex(s[:maxLen], " ")
+	cut := string(runes[:maxLen])
+	lastSpace := strings.LastIndex(cut, " ")
 	if lastSpace == -1 {
-		return s[:maxLen] + "..."
+		return cut + "..."
 	}
-	return s[:lastSpace] + "..."
+	return cut[:lastSpace] + "..."
 }

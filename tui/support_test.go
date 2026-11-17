@@ -11,6 +11,7 @@ import (
 	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/tui/theme"
 	"github.com/hishantik/anilix/version"
 )
 
@@ -189,6 +190,36 @@ func TestTheAniListScreenShowsTheAccount(t *testing.T) {
 	}
 }
 
+// TestTheLoggedOutAniListScreenOpensOnLogIn checks the cursor: the tracking
+// row only exists for a connected account, so the screen opens on the login
+// action, marks it, and the footer describes the keys the screen honours.
+func TestTheLoggedOutAniListScreenOpensOnLogIn(t *testing.T) {
+	tempHome(t)
+	config.Set("anilist.token", "")
+	config.Set("anilist.username", "")
+	defer config.Set("anilist.token", "")
+
+	m := NewSearchModel()
+	m.resize(80, 30)
+	m.gotoAniList()
+
+	if m.anilistCursor != 1 {
+		t.Fatalf("the logged-out screen opened on row %d, want the login row", m.anilistCursor)
+	}
+	selected := theme.Icon(theme.IconSelectionBar) + " Log in"
+	if view := shellStrip(m.viewAniListState()); !strings.Contains(view, selected) {
+		t.Errorf("the login row is not selected:\n%s", view)
+	}
+
+	hints := shellStrip(strings.Join(m.hintList(), " "))
+	if !strings.Contains(hints, "enter select") {
+		t.Errorf("the footer does not describe the account keys: %q", hints)
+	}
+	if strings.Contains(hints, "move") {
+		t.Errorf("the footer advertises a move key with one row: %q", hints)
+	}
+}
+
 // TestLogoutIsConfirmed checks the destructive action: enter on log out
 // asks first, and only a confirmed answer drops the token.
 func TestLogoutIsConfirmed(t *testing.T) {
@@ -230,6 +261,28 @@ func TestLogoutIsConfirmed(t *testing.T) {
 	}
 	if config.GetString("anilist.token") != "" {
 		t.Error("the confirmed logout kept the stored token")
+	}
+}
+
+// TestTheSearchErrorRetriesTheLastQuery checks the retry the failed search
+// advertises: ctrl+r re-runs the query instead of making the user retype it.
+func TestTheSearchErrorRetriesTheLastQuery(t *testing.T) {
+	m := NewSearchModel()
+	m.resize(80, 24)
+	m.textInput.Blur()
+	m.lastQuery = "frieren"
+	m.searchState.Err = errors.New("the provider could not be reached")
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	got := updated.(*SearchModel)
+	if cmd == nil {
+		t.Fatal("ctrl+r returned no command")
+	}
+	if !got.searchState.Loading {
+		t.Error("ctrl+r did not start the retry")
+	}
+	if got.searchState.Err != nil {
+		t.Error("ctrl+r kept the error on screen")
 	}
 }
 

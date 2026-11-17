@@ -109,7 +109,7 @@ func (a Artwork) placeholderRows(inner, rows int) []string {
 		content = append(content, centreText(title, inner, theme.Text, fill))
 	}
 	if rows > 2 {
-		content = append(content, centreText("No cover art", inner, theme.Disabled, fill))
+		content = append(content, centreText("No cover art", inner, theme.Muted, fill))
 	}
 	if len(content) > rows {
 		content = content[:rows]

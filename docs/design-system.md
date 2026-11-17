@@ -134,7 +134,7 @@ for?", so a palette change never requires touching a screen.
 |---|---|---|
 | `text` | `#E6E1E5` | Primary reading text (on-surface) |
 | `muted` | `#CAC4D0` | Secondary text, descriptions (on-surface-variant) |
-| `disabled` | `#6A6E7A` | Unavailable content, hints, captions |
+| `disabled` | `#6A6E7A` | Unavailable content only |
 | `outline` | `#938F99` | Container borders, strong dividers |
 | `outline-variant` | `#262B33` | Subtle dividers, card borders |
 
@@ -173,7 +173,7 @@ Ten steps. Each is a *role*, not a size.
 | `body` | `text` | Default reading text |
 | `label` | `muted` | Metadata paired with a value |
 | `label-strong` | Bold, `muted` | Emphasised metadata labels |
-| `caption` | Faint, `disabled` | Hints, timestamps, counts, key hints |
+| `caption` | `muted` | Hints, timestamps, counts, key hints |
 | `overline` | Bold, `primary`, uppercase | Section eyebrows |
 | `code` | `muted` | URLs, ids, technical values |
 
@@ -181,8 +181,9 @@ Ten steps. Each is a *role*, not a size.
 
 - Upper case is reserved for `overline`. Labels stay sentence case.
 - One `overline` per section. It is an eyebrow, not a heading.
-- Faint (`caption`) is for information the user may skip. Never for
-  information they need.
+- Secondary text is `muted`, not faint: hints, counts and timestamps are
+  information the user reads, so they stay above the 4.5:1 contrast floor.
+  `disabled` is reserved for content that cannot be used right now.
 - A title is never longer than two lines; truncate rather than shrink.
 
 ---
@@ -379,7 +380,7 @@ frame and the same focus treatment.
 
 - **Empty** — icon, a short statement, and what to do next.
 - **Error** — the error role for the failure, `muted` for the explanation,
-  and the retry hint in `disabled`. A failed screen must stay readable.
+  and the retry hint in `muted`. A failed screen must stay readable.
 - **Loading** — a spinner with a label; a determinate bar when there is
   progress.
 
@@ -541,8 +542,11 @@ go test -short ./...        # includes the token, contrast, width and state test
 go build . && ./anilix theme # the live showcase
 ```
 
-Manual matrix: 40×20 (Termux), 80×24, 120×40, 200×50 — compact, medium and
-expanded; plus `NO_COLOR=1` and a 16 colour terminal.
+Manual matrix: 40×15, 60×20, 80×24, 120×35, 160×45 — compact, medium and
+expanded; plus `NO_COLOR=1`, a no-unicode terminal and a resize in both
+directions. `tui/responsive_test.go` runs the same screens at those sizes and
+fails on a row wider than the terminal, a screen taller than the content
+region, a colour escape without colour, or a layout that breaks a resize.
 
 ---
 
@@ -557,6 +561,7 @@ expanded; plus `NO_COLOR=1` and a 16 colour terminal.
 | 5 — Navigation drawer | Drawer destinations, navigation stack | done |
 | 6 — Polish | Empty/error/retry states, time-based progress, contrast pass | done |
 | 7 — Supporting screens | History, watchlist (the AniList list), AniList page, adaptive settings | done |
+| 8 — Responsive polish | Phone-to-desktop sweep: wrapping states, compact detail budgets, accurate hints, permanent `tui/responsive_test.go` | done |
 
 The pre-redesign palette (`tui/theme/legacy.go` and the `Theme` variable of
 `tui/theme.go`) is gone: every screen of the application draws itself from

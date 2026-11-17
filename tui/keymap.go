@@ -16,6 +16,7 @@ type keymap struct {
 	MenuAlt    key.Binding
 	ConfirmYes key.Binding
 	ConfirmNo  key.Binding
+	Retry      key.Binding
 }
 
 func newKeymap() keymap {
@@ -71,6 +72,10 @@ func newKeymap() keymap {
 		ConfirmNo: key.NewBinding(
 			key.WithKeys("n", "esc"),
 			key.WithHelp("n/esc", "no"),
+		),
+		Retry: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "retry"),
 		),
 	}
 }

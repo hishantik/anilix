@@ -209,17 +209,19 @@ func TestEpisodeRowsStayUnmarkedWithoutTracking(t *testing.T) {
 	}
 }
 
-// TestTheEpisodeSectionCarriesTheTranslation checks that the episode list
-// says which translation its servers were fetched with.
-func TestTheEpisodeSectionCarriesTheTranslation(t *testing.T) {
+// TestTheEpisodeSectionCarriesThePosition checks that the episode header
+// says where the cursor is: the translation switch already lives in the
+// app bar, so the list header uses its trailing slot for the position.
+func TestTheEpisodeSectionCarriesThePosition(t *testing.T) {
 	m := modelWithResults(120, 30)
 	m.state = detailState
-	m.episodeState.Episodes = []string{"1"}
+	m.episodeState.Episodes = []string{"1", "2", "3"}
 	m.updateEpisodeList()
+	m.episodeList.Select(1)
 
 	view := shellStrip(m.viewDetailState())
-	if !strings.Contains(view, "SUB") {
-		t.Errorf("the episode section lost the translation badge:\n%s", view)
+	if !strings.Contains(view, "2 of 3") {
+		t.Errorf("the episode section lost the position counter:\n%s", view)
 	}
 }
 

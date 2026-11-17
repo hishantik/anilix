@@ -87,15 +87,17 @@ func (m *SearchModel) viewSearchState() string {
 	case len(m.searchState.Results) > 0:
 		lines = append(lines, m.renderDiscovery())
 
-	case m.textInput.Value() == "" && len(m.recentSearches) > 0:
-		lines = append(lines, m.renderRecentSearches())
-
 	case m.searchState.Err != nil:
+		// A failed search wins over the recent searches: the list below
+		// would otherwise hide the reason the query returned nothing.
 		lines = append(lines, ui.ErrorState{
 			Title:   "Search failed",
 			Message: m.searchState.Err.Error(),
 			Hint:    "ctrl+r to retry",
 		}.Render(m.contentWidth))
+
+	case m.textInput.Value() == "" && len(m.recentSearches) > 0:
+		lines = append(lines, m.renderRecentSearches())
 
 	case m.textInput.Value() != "" && !m.textInput.Focused():
 		// A query ran and came back with nothing: the screen must still
@@ -312,14 +314,18 @@ func detailLayout(totalWidth, totalHeight int) (leftW, rightW, availableH int, i
 // screen takes.
 //
 // The panel below the cover holds the score, the facts and the tags: the
-// cover gets what is left.
+// cover gets what is left after them, and gives way first on a short
+// terminal.
 func (m *SearchModel) detailArtworkRows(width, height int) int {
-	rows := height - 14
+	rows := height - 16
 	if max := (width - 2) * 3 / 2; rows > max {
 		rows = max
 	}
-	if rows < 8 {
-		rows = 8
+	if rows > 20 {
+		rows = 20
+	}
+	if rows < 6 {
+		rows = 6
 	}
 	return rows
 }
@@ -373,8 +379,11 @@ func (m *SearchModel) renderDetailLeftPanel(meta *MetadataPanel, width int, term
 	}
 
 	content := strings.Join(sections, "\n")
-	// Width sets minimum, MaxWidth enforces maximum — prevents overflow
-	return lipgloss.NewStyle().Width(width).MaxWidth(width).Render(content)
+	// Width sets minimum, MaxWidth enforces maximum — prevents overflow.
+	// The height is a hard ceiling too: the panel never grows past the
+	// region the shell gave it.
+	rendered := lipgloss.NewStyle().Width(width).MaxWidth(width).Render(content)
+	return strings.Join(fitRows(splitLines(rendered), termHeight), "\n")
 }
 
 // renderDetailRightPanel renders the title, the synopsis and the episode
@@ -383,60 +392,69 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 	var lines []string
 
 	// Title section
-	lines = append(lines, wrapText(meta.Title, width, theme.Title.In(theme.Primary)))
+	if meta.Title != "" {
+		lines = append(lines, splitLines(wrapText(meta.Title, width, theme.Title.In(theme.Primary)))...)
+	}
 	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
-		lines = append(lines, wrapText(meta.TitleEnglish, width, theme.Label.Style()))
+		lines = append(lines, splitLines(wrapText(meta.TitleEnglish, width, theme.Label.Style()))...)
 	}
 	if meta.TitleNative != "" {
-		lines = append(lines, wrapText(meta.TitleNative, width, theme.Label.Style()))
+		lines = append(lines, splitLines(wrapText(meta.TitleNative, width, theme.Label.Style()))...)
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "", ui.Divider(false, width))
 	}
 
-	// Divider
-	lines = append(lines, "")
-	lines = append(lines, ui.Divider(false, width))
+	tracking := m.renderTrackingStatus()
+
+	// The episode list keeps a floor of rows: the header gives up its
+	// optional lines - the synopsis first - instead of pushing the list
+	// off the bottom of a short terminal.
+	const (
+		sectionRows = 2 // the blank line and the section header
+		listFloor   = 5 // two and a half episode rows
+	)
+
+	// A title that wraps further than the panel can spare is cut: the
+	// episode list must stay on screen.
+	if budget := height - sectionRows - listFloor - 2; len(lines) > budget {
+		if budget < 1 {
+			budget = 1
+		}
+		lines = lines[:budget]
+	}
 
 	// Synopsis
-	synopsisLines := 0
 	if meta.Synopsis != "" {
-		synopsis := stripHTML(meta.Synopsis)
-		maxLen := width * 5 // ~5 lines
-		if maxLen > 0 {
-			synopsis = truncateSynopsis(synopsis, maxLen)
+		// The block costs a blank line, its own lines, a blank, a divider
+		// and the blank under the divider.
+		room := height - len(lines) - len(tracking) - sectionRows - listFloor - 4
+		if room > 5 {
+			room = 5
 		}
-		rendered := wrapText(synopsis, width, theme.Body.Style())
-		lines = append(lines, "")
-		lines = append(lines, rendered)
-		synopsisLines = strings.Count(rendered, "\n") + 1
+		if room >= 1 {
+			synopsis := stripHTML(meta.Synopsis)
+			rendered := splitLines(wrapText(truncateSynopsis(synopsis, room*width), width, theme.Body.Style()))
+			if len(rendered) > room {
+				rendered = rendered[:room]
+			}
+			lines = append(lines, "")
+			lines = append(lines, rendered...)
+			lines = append(lines, "", ui.Divider(false, width), "")
+		}
 	}
 
-	// Second divider
-	lines = append(lines, "")
-	lines = append(lines, ui.Divider(false, width))
-	lines = append(lines, "")
-
-	// Calculate episode list height
-	fixedLines := 4 // title lines (at least 1)
-	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
-		fixedLines++
-	}
-	if meta.TitleNative != "" {
-		fixedLines++
-	}
-	fixedLines += 3 // dividers + blank lines
-	fixedLines += synopsisLines
-	fixedLines += 3                          // second divider + blanks
-	fixedLines += 2                          // episode header: blank line + section title
-	episodeHeight := height - fixedLines - 8 // chrome reservation
-	if episodeHeight < 5 {
-		episodeHeight = 5
+	episodeHeight := height - len(lines) - len(tracking) - sectionRows
+	if episodeHeight < listFloor {
+		episodeHeight = listFloor
 	}
 
 	// Set episode list size for the right panel
 	m.episodeList.SetSize(width, episodeHeight)
 
-	lines = append(lines, m.renderTrackingStatus()...)
-	lines = append(lines, episodeSectionHeader(m.searchState.TranslationType, width)...)
-	lines = append(lines, m.renderEpisodeArea()...)
+	lines = append(lines, tracking...)
+	lines = append(lines, m.episodeSectionHeader(width)...)
+	lines = append(lines, m.renderEpisodeArea(width)...)
 
 	// Width + MaxWidth on each line to prevent overflow
 	joined := strings.Join(lines, "\n")
@@ -444,17 +462,26 @@ func (m *SearchModel) renderDetailRightPanel(meta *MetadataPanel, width, height 
 }
 
 // episodeSectionHeader returns the header of the episode list: the name of
-// the section and the translation the servers were fetched with.
+// the section and where the cursor is in it.
 //
-// The badge is the same switch the app bar shows, so the list and the
-// toggle always agree about which translation is on.
-func episodeSectionHeader(translation string, width int) []string {
-	if translation == "" {
-		translation = "sub"
+// The translation switch lives in the app bar, so the list header carries
+// the position instead: a long series always says how far it goes. Until
+// an episode is loaded the header falls back to the translation.
+func (m *SearchModel) episodeSectionHeader(width int) []string {
+	trailing := renderSubDubSwitch(m.searchState.TranslationType)
+	if total := len(m.episodeState.Episodes); total > 0 {
+		selected := m.episodeList.Index() + 1
+		if selected < 1 {
+			selected = 1
+		}
+		if selected > total {
+			selected = total
+		}
+		trailing = fmt.Sprintf("%d of %d", selected, total)
 	}
 	return []string{
 		"",
-		ui.SectionHeader("Episodes", renderSubDubSwitch(translation), width),
+		ui.SectionHeader("Episodes", trailing, width),
 	}
 }
 
@@ -470,8 +497,8 @@ func (m *SearchModel) renderTrackingStatus() []string {
 }
 
 // renderEpisodeArea renders the episode list, or the state of the request
-// that fills it.
-func (m *SearchModel) renderEpisodeArea() []string {
+// that fills it, wrapped to the width of the panel it lands in.
+func (m *SearchModel) renderEpisodeArea(width int) []string {
 	switch {
 	case m.episodeState.Loading:
 		return []string{m.loadingLine("Loading episodes...")}
@@ -482,15 +509,18 @@ func (m *SearchModel) renderEpisodeArea() []string {
 		if m.episodeState.Selected < len(m.episodeState.Episodes) {
 			epNum = m.episodeState.Episodes[m.episodeState.Selected]
 		}
-		headline := theme.Title.In(theme.Primary).
-			Render(fmt.Sprintf("Playing: %s - Episode %s", selectedAnime.Name, epNum))
-		return []string{headline, mutedLine("Launching player...")}
+		headline := fmt.Sprintf("Playing: %s - Episode %s", selectedAnime.Name, epNum)
+		return []string{
+			wrapText(headline, width, theme.Title.In(theme.Primary)),
+			mutedLine("Launching player..."),
+		}
 
 	case len(m.episodeState.Episodes) > 0:
 		return []string{m.episodeList.View()}
 
 	case m.episodeState.Err != nil:
-		return []string{errorLine(fmt.Sprintf("Error: %v", m.episodeState.Err))}
+		message := fmt.Sprintf("Error: %v", m.episodeState.Err)
+		return []string{wrapText(message, width, theme.Fg(lipgloss.NewStyle(), theme.Error))}
 
 	default:
 		return []string{mutedLine("No episodes found")}
@@ -498,85 +528,141 @@ func (m *SearchModel) renderEpisodeArea() []string {
 }
 
 // renderDetailSingleColumn renders the detail view as a single column for narrow terminals.
+//
+// The episode list is the reason the screen exists, so it keeps a floor of
+// rows: the header gives up its optional lines - the synopsis first, then
+// the extra facts - instead of pushing the list off the bottom of a phone
+// terminal.
 func (m *SearchModel) renderDetailSingleColumn(meta *MetadataPanel, width int) string {
-	var lines []string
+	tracking := m.renderTrackingStatus()
 
-	// Title
-	lines = append(lines, wrapText(meta.Title, width, theme.Title.In(theme.Primary)))
-	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
-		lines = append(lines, wrapText(meta.TitleEnglish, width, theme.Label.Style()))
-	}
-	if meta.TitleNative != "" {
-		lines = append(lines, wrapText(meta.TitleNative, width, theme.Label.Style()))
-	}
+	const (
+		sectionRows = 2 // the blank line and the section header
+		listFloor   = 4 // two episode rows
+		dividerRows = 1
+	)
 
-	// Info line
-	var infoParts []string
-	if meta.Year > 0 {
-		infoParts = append(infoParts, strconv.Itoa(meta.Year))
-	}
-	if meta.Type != "" {
-		infoParts = append(infoParts, meta.Type)
-	}
-	if meta.Episodes > 0 {
-		infoParts = append(infoParts, fmt.Sprintf("%d episodes", meta.Episodes))
-	}
-	if meta.Status != "" {
-		infoParts = append(infoParts, meta.Status)
-	}
-	if len(infoParts) > 0 {
-		lines = append(lines, wrapText(mutedLine(strings.Join(infoParts, "  ·  ")), width, lipgloss.NewStyle()))
+	budget := m.contentHeight - sectionRows - listFloor - len(tracking) - dividerRows
+	if budget < 0 {
+		budget = 0
 	}
 
-	// Genres
-	if len(meta.Genres) > 0 {
-		lines = append(lines, mutedLine(strings.Join(meta.Genres, ", ")))
+	// On a compact screen the details of the entry were the previous
+	// screen: the episode list is what this one is for, so the header
+	// stays to the title and the core facts.
+	if ui.BreakpointOf(width).IsCompact() && budget > 4 {
+		budget = 4
 	}
 
-	// Score, Rank
-	var scoreParts []string
-	if meta.Score > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("Score: %.2f", meta.Score))
-	}
-	if meta.Rank > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("Rank: #%d", meta.Rank))
-	}
-	if meta.Popularity > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("Popularity: #%d", meta.Popularity))
-	}
-	if len(scoreParts) > 0 {
-		lines = append(lines, wrapText(mutedLine(strings.Join(scoreParts, "  ·  ")), width, lipgloss.NewStyle()))
-	}
+	header := detailCompactHeader(meta, width, budget)
 
-	// Source
-	if meta.Source != "" {
-		lines = append(lines, theme.Caption.Render("Source: "+meta.Source))
+	lines := make([]string, 0, len(header)+8)
+	lines = append(lines, header...)
+	if len(header) > 0 {
+		lines = append(lines, ui.Divider(false, width))
 	}
+	lines = append(lines, tracking...)
 
-	// Synopsis
-	if meta.Synopsis != "" {
-		synopsis := stripHTML(meta.Synopsis)
-		maxLen := width * 3
-		if maxLen > 0 {
-			synopsis = truncateSynopsis(synopsis, maxLen)
-		}
-		lines = append(lines, "")
-		lines = append(lines, wrapText(synopsis, width, theme.Body.Style()))
+	section := m.episodeSectionHeader(width)
+	if len(lines) == 0 {
+		// No header above: the blank line of the section header is not
+		// separating anything.
+		section = section[1:]
 	}
+	lines = append(lines, section...)
 
-	// Divider
-	sepWidth := width
-	if sepWidth < 10 {
-		sepWidth = 10
+	listRows := m.contentHeight - len(lines)
+	if listRows < listFloor {
+		listRows = listFloor
 	}
-	lines = append(lines, "")
-	lines = append(lines, ui.Divider(false, sepWidth))
-
-	lines = append(lines, m.renderTrackingStatus()...)
-	lines = append(lines, episodeSectionHeader(m.searchState.TranslationType, width)...)
-	lines = append(lines, m.renderEpisodeArea()...)
+	m.episodeList.SetSize(width, listRows)
+	lines = append(lines, m.renderEpisodeArea(width)...)
 
 	return strings.Join(lines, "\n")
+}
+
+// detailCompactHeader builds the header of the single-column detail screen.
+//
+// The sections are added in the order a person reads them, and each one is
+// dropped when the budget cannot hold it: the title first, then the facts,
+// the tags, the score and finally the synopsis. A long title is cut with an
+// ellipsis, so it still says there is more.
+func detailCompactHeader(meta *MetadataPanel, width, budget int) []string {
+	if budget <= 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, budget)
+
+	addBlock := func(text string, style lipgloss.Style) {
+		if text == "" || len(lines) >= budget {
+			return
+		}
+		room := budget - len(lines)
+		wrapped := splitLines(wrapText(truncateSynopsis(text, room*width), width, style))
+		if len(wrapped) > room {
+			wrapped = wrapped[:room]
+		}
+		lines = append(lines, wrapped...)
+	}
+
+	addBlock(meta.Title, theme.Title.In(theme.Primary))
+	if meta.TitleEnglish != "" && meta.TitleEnglish != meta.Title {
+		addBlock(meta.TitleEnglish, theme.Label.Style())
+	}
+	if meta.TitleNative != "" {
+		addBlock(meta.TitleNative, theme.Label.Style())
+	}
+
+	info := make([]string, 0, 4)
+	if meta.Year > 0 {
+		info = append(info, strconv.Itoa(meta.Year))
+	}
+	if meta.Type != "" {
+		info = append(info, meta.Type)
+	}
+	if meta.Episodes > 0 {
+		info = append(info, fmt.Sprintf("%d episodes", meta.Episodes))
+	}
+	if meta.Status != "" {
+		info = append(info, meta.Status)
+	}
+	addBlock(strings.Join(info, "  ·  "), theme.Label.Style())
+
+	if len(meta.Genres) > 0 {
+		addBlock(strings.Join(meta.Genres, ", "), theme.Label.Style())
+	}
+
+	score := make([]string, 0, 3)
+	if meta.Score > 0 {
+		score = append(score, fmt.Sprintf("Score: %.2f", meta.Score))
+	}
+	if meta.Rank > 0 {
+		score = append(score, fmt.Sprintf("Rank: #%d", meta.Rank))
+	}
+	if meta.Popularity > 0 {
+		score = append(score, fmt.Sprintf("Popularity: #%d", meta.Popularity))
+	}
+	addBlock(strings.Join(score, "  ·  "), theme.Label.Style())
+
+	if meta.Source != "" {
+		addBlock("Source: "+meta.Source, theme.Caption.Style())
+	}
+
+	// The synopsis gets what is left, with the blank line that keeps it
+	// apart from the facts.
+	if meta.Synopsis != "" && len(lines)+2 <= budget {
+		room := budget - len(lines) - 1
+		synopsis := stripHTML(meta.Synopsis)
+		wrapped := splitLines(wrapText(truncateSynopsis(synopsis, room*width), width, theme.Body.Style()))
+		if len(wrapped) > room {
+			wrapped = wrapped[:room]
+		}
+		lines = append(lines, "")
+		lines = append(lines, wrapped...)
+	}
+
+	return lines
 }
 
 func (m *SearchModel) viewConfirmQuit() string {
@@ -727,6 +813,13 @@ func (m *SearchModel) settingsBody(budget int) string {
 		}
 		m.settingsState.Scroll = start
 		lines = lines[start : start+budget]
+	}
+
+	// A section header at the bottom with none of its rows under it is an
+	// orphan: it announces a section the user cannot see. Drop it instead
+	// of showing a label with nothing under it.
+	for len(lines) > 0 && lines[len(lines)-1].row == -1 {
+		lines = lines[:len(lines)-1]
 	}
 
 	out := make([]string, 0, len(lines))
@@ -922,6 +1015,21 @@ func (m *SearchModel) viewAniListLogin() string {
 	}.Render()
 
 	return lipgloss.Place(m.contentWidth, m.contentHeight, lipgloss.Center, lipgloss.Center, dialog)
+}
+
+// aniListLoggedIn reports whether the account screen has an account.
+func aniListLoggedIn() bool {
+	return auth.IsLoggedIn()
+}
+
+// aniListStartCursor returns the row the account screen opens on: the
+// tracking switch for a connected account, the login action for a
+// disconnected one. The cursor never rests on a row that does not exist.
+func aniListStartCursor() int {
+	if aniListLoggedIn() {
+		return 0
+	}
+	return 1
 }
 
 // viewAniListState renders the AniList account screen.

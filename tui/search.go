@@ -150,10 +150,10 @@ func NewSearchModel() *SearchModel {
 	ts := textinput.DefaultStyles(true)
 	ts.Focused.Prompt = theme.Fg(lipgloss.NewStyle(), theme.Primary)
 	ts.Focused.Text = theme.Fg(lipgloss.NewStyle(), theme.Text)
-	ts.Focused.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Disabled)
+	ts.Focused.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Muted)
 	ts.Blurred.Prompt = theme.Fg(lipgloss.NewStyle(), theme.Muted)
 	ts.Blurred.Text = theme.Fg(lipgloss.NewStyle(), theme.Muted)
-	ts.Blurred.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Disabled)
+	ts.Blurred.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Muted)
 	ti.SetStyles(ts)
 
 	translationType := config.GetString("translation_type")
@@ -437,7 +437,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.settingsState.Cursor {
 				case settingsRowAniList:
 					m.state = anilistState
-					m.anilistCursor = 0
+					m.anilistCursor = aniListStartCursor()
 					return m, nil
 				case settingsRowUpdate:
 					if m.settingsState.UpdateStatus == "" || m.settingsState.UpdateStatus == "error" {
@@ -638,6 +638,37 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 					return progressTickMsg{}
 				}))
+			}
+
+		case key.Matches(msg, m.keymap.Retry):
+			// The error states advertise ctrl+r: it re-runs the request
+			// that failed instead of leaving the user to retype a query.
+			switch m.state {
+			case searchState:
+				if m.lastQuery != "" {
+					m.searchState.Loading = true
+					m.searchState.Err = nil
+					m.progressPercent = 0
+					m.progressTarget = 0.3
+					cmds = append(cmds, m.doSearch(m.lastQuery))
+					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+						return progressTickMsg{}
+					}))
+				}
+			case detailState:
+				if m.searchState.Selected < len(m.searchState.Results) {
+					selectedAnime := m.searchState.Results[m.searchState.Selected]
+					if selectedAnime != nil && m.episodeState.AnimeID != "" {
+						m.episodeState.Loading = true
+						m.episodeState.Err = nil
+						m.progressPercent = 0
+						m.progressTarget = 0.4
+						cmds = append(cmds, m.fetchEpisodes(selectedAnime))
+						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+							return progressTickMsg{}
+						}))
+					}
+				}
 			}
 
 		case key.Matches(msg, m.keymap.Settings):

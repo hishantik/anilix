@@ -239,6 +239,30 @@ func (m *SearchModel) hintList() []string {
 			ui.KeyHint("n/esc", "no"),
 		}
 
+	case confirmLogoutState:
+		return []string{
+			ui.KeyHint("y/enter", "yes"),
+			ui.KeyHint("n/esc", "no"),
+		}
+
+	case anilistState:
+		hints := make([]string, 0, 4)
+		if aniListLoggedIn() {
+			hints = append(hints, ui.KeyHint("↑↓", "move"))
+		}
+		return append(hints,
+			ui.KeyHint("enter", "select"),
+			ui.KeyHint("esc", "back"),
+			ui.KeyHint("ctrl+c", "quit"),
+		)
+
+	case anilistLoginState:
+		// The browser owns the flow until it answers: the only key the
+		// screen honours is the one that leaves it.
+		return []string{
+			ui.KeyHint("esc", "cancel"),
+		}
+
 	case settingsState:
 		hints := []string{ui.KeyHint("↑↓", "move")}
 		switch {
@@ -275,6 +299,13 @@ func (m *SearchModel) hintList() []string {
 		}
 
 	case detailState:
+		if m.episodeState.Err != nil {
+			return []string{
+				ui.KeyHint("ctrl+r", "retry"),
+				ui.KeyHint("esc", "back"),
+				ui.KeyHint("ctrl+c", "quit"),
+			}
+		}
 		return []string{
 			ui.KeyHint("esc", "back"),
 			ui.KeyHint("enter", "play"),
@@ -291,6 +322,15 @@ func (m *SearchModel) hintList() []string {
 		}
 
 	default:
+		if m.searchState.Err != nil {
+			// The failed search has one useful key, and it is not the
+			// list navigation: advertise the retry.
+			return []string{
+				ui.KeyHint("ctrl+r", "retry"),
+				ui.KeyHint("/", "new search"),
+				ui.KeyHint("ctrl+c", "quit"),
+			}
+		}
 		if m.textInput.Focused() {
 			// The search field has the keyboard: "m" would be typed into
 			// it, so the menu is reached with the escape key first.

@@ -326,6 +326,12 @@ func navIndexOf(id navID) int {
 // It is plain text on purpose: the drawer is narrow, and a styled hint
 // would not fit into a phone sized column.
 func (m *SearchModel) navFooterHint() string {
+	// The hint describes the keys of the drawer: showing it while the
+	// drawer does not hold the keyboard would advertise keys that move
+	// the list instead.
+	if !m.navHasFocus() {
+		return ""
+	}
 	return "↑↓ move · esc close"
 }
 
@@ -492,7 +498,7 @@ func (m *SearchModel) gotoHistory() tea.Cmd {
 func (m *SearchModel) gotoAniList() tea.Cmd {
 	m.prevState = m.state
 	m.state = anilistState
-	m.anilistCursor = 0
+	m.anilistCursor = aniListStartCursor()
 	return nil
 }
 

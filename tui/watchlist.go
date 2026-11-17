@@ -209,7 +209,16 @@ func watchlistFactsLine(e *anilist.WatchlistEntry) string {
 func (m *SearchModel) viewWatchlistState() string {
 	listW, previewW, height, isNarrow := watchlistLayout(m.contentWidth, m.contentHeight)
 
-	if isNarrow || previewW < 20 {
+	// The preview is for an entry: a loading, failed, disconnected or
+	// empty screen gets the full width, so the state is not squeezed next
+	// to a panel that says "nothing selected" twice.
+	if isNarrow || previewW < 20 || len(m.watchlist.Entries) == 0 {
+		if previewW >= 20 {
+			listW = m.contentWidth - 2
+			if listW < 20 {
+				listW = 20
+			}
+		}
 		return m.renderWatchlistPanel(listW, height)
 	}
 

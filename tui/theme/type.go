@@ -70,7 +70,7 @@ func AllTypes() []Type {
 //	Body        text               - default reading text
 //	Label       muted              - metadata labels
 //	LabelStrong bold, muted        - emphasised labels
-//	Caption     faint, disabled    - hints, timestamps
+//	Caption     muted              - hints, timestamps, counts
 //	Overline    bold, primary, caps- section eyebrows
 //	Code        muted, no wrap      - technical values
 func (t Type) Style() lipgloss.Style {
@@ -90,7 +90,7 @@ func (t Type) Style() lipgloss.Style {
 	case LabelStrong:
 		return Fg(lipgloss.NewStyle().Bold(true), Muted)
 	case Caption:
-		return Fg(lipgloss.NewStyle().Faint(true), Disabled)
+		return Fg(lipgloss.NewStyle(), Muted)
 	case Overline:
 		return Fg(lipgloss.NewStyle().Bold(true), Primary)
 	case Code:

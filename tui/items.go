@@ -217,6 +217,10 @@ func makeResultList(km keymap, delegate *resultDelegate) list.Model {
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
+	// The screens carry their own position counter in the section header;
+	// a row of pagination dots under the list is decoration that costs a
+	// row of content.
+	l.SetShowPagination(false)
 	// The shell shows the key hints in its footer: the help of the list
 	// would repeat them.
 	l.SetShowHelp(false)

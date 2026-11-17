@@ -25,6 +25,10 @@ type EmptyState struct {
 }
 
 // Render renders the empty state.
+//
+// The title and the hint wrap to the width they are given: a hint that is
+// cut off by the panel it lands in tells the user nothing, and the
+// explanation is the part that says what to do next.
 func (e EmptyState) Render(width int) string {
 	if width < 1 {
 		width = 1
@@ -35,15 +39,22 @@ func (e EmptyState) Render(width int) string {
 	}
 
 	lines := make([]string, 0, 3)
-	lines = append(lines, styledLine([]segment{
-		{text: icon, role: theme.Muted},
-		{text: " ", role: theme.RoleUnset},
-		{text: e.Title, role: theme.Text, bold: true},
-	}, width, theme.RoleUnset))
-	if e.Hint != "" {
+	for i, text := range wrapWords(e.Title, width-2) {
+		prefix := "  "
+		if i == 0 {
+			prefix = icon + " "
+		}
 		lines = append(lines, styledLine([]segment{
-			{text: "  " + e.Hint, role: theme.Muted},
+			{text: prefix, role: theme.Muted},
+			{text: text, role: theme.Text, bold: true},
 		}, width, theme.RoleUnset))
+	}
+	if e.Hint != "" {
+		for _, text := range wrapWords(e.Hint, width-2) {
+			lines = append(lines, styledLine([]segment{
+				{text: "  " + text, role: theme.Muted},
+			}, width, theme.RoleUnset))
+		}
 	}
 	if e.Action != "" {
 		lines = append(lines, styledLine([]segment{
@@ -67,27 +78,109 @@ type ErrorState struct {
 }
 
 // Render renders the error state.
+//
+// The failure, the explanation and the retry hint all wrap to the width:
+// an error that is cut off at the edge of a phone screen hides the reason
+// it happened.
 func (e ErrorState) Render(width int) string {
 	if width < 1 {
 		width = 1
 	}
 	lines := make([]string, 0, 3)
-	lines = append(lines, styledLine([]segment{
-		{text: theme.Icon(theme.IconWarning), role: theme.Error},
-		{text: " ", role: theme.RoleUnset},
-		{text: e.Title, role: theme.Error, bold: true},
-	}, width, theme.RoleUnset))
-	if e.Message != "" {
+	for i, text := range wrapWords(e.Title, width-2) {
+		prefix := "  "
+		if i == 0 {
+			prefix = theme.Icon(theme.IconWarning) + " "
+		}
 		lines = append(lines, styledLine([]segment{
-			{text: "  " + e.Message, role: theme.Muted},
+			{text: prefix, role: theme.Error},
+			{text: text, role: theme.Error, bold: true},
 		}, width, theme.RoleUnset))
+	}
+	if e.Message != "" {
+		for _, text := range wrapWords(e.Message, width-2) {
+			lines = append(lines, styledLine([]segment{
+				{text: "  " + text, role: theme.Muted},
+			}, width, theme.RoleUnset))
+		}
 	}
 	if e.Hint != "" {
-		lines = append(lines, styledLine([]segment{
-			{text: "  " + e.Hint, role: theme.Disabled},
-		}, width, theme.RoleUnset))
+		for _, text := range wrapWords(e.Hint, width-2) {
+			lines = append(lines, styledLine([]segment{
+				{text: "  " + text, role: theme.Muted},
+			}, width, theme.RoleUnset))
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// wrapWords breaks text into lines of at most width cells.
+//
+// It is a plain word wrap with an ASCII space as the separator: the state
+// components take human sentences, not styled runs, and a word longer than
+// the line is broken instead of pushing the line past the width.
+func wrapWords(text string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+
+	lines := make([]string, 0, 4)
+	for _, paragraph := range strings.Split(text, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+
+		line := ""
+		for _, word := range words {
+			for lipgloss.Width(word) > width {
+				if line != "" {
+					lines = append(lines, line)
+					line = ""
+				}
+				head, rest := splitAtWidth(word, width)
+				lines = append(lines, head)
+				word = rest
+			}
+
+			switch {
+			case line == "":
+				line = word
+			case lipgloss.Width(line)+1+lipgloss.Width(word) <= width:
+				line += " " + word
+			default:
+				lines = append(lines, line)
+				line = word
+			}
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	if len(lines) == 0 {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// splitAtWidth splits a string at the last character that fits in width
+// cells.
+//
+// It always consumes at least one character: a glyph wider than the line
+// (a wide CJK character in a one-cell column) is emitted alone instead of
+// making the caller loop forever.
+func splitAtWidth(s string, width int) (head, rest string) {
+	used := 0
+	for i, r := range s {
+		w := lipgloss.Width(string(r))
+		if used+w > width && i > 0 {
+			return s[:i], s[i:]
+		}
+		used += w
+	}
+	return s, ""
 }
 
 // ProgressBar renders a determinate progress bar.

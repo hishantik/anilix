@@ -101,7 +101,7 @@ func (d Drawer) Render() string {
 		}
 		footer := lipgloss.NewStyle().MaxWidth(inner).Render(d.Footer)
 		lines = append(lines, styledLine([]segment{
-			{text: footer, role: theme.Disabled},
+			{text: footer, role: theme.Muted},
 		}, inner, d.Fill))
 	}
 

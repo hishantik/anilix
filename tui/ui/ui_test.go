@@ -87,6 +87,26 @@ func TestComponentsRenderWithoutColorSupport(t *testing.T) {
 	}
 }
 
+// TestStateTextWrapsToItsWidth checks that a long hint is wrapped rather
+// than clipped, and that a wide glyph in a one-cell column terminates.
+func TestStateTextWrapsToItsWidth(t *testing.T) {
+	out := EmptyState{Title: "No results", Hint: "Try a shorter title or check the spelling."}.Render(20)
+	for _, line := range strings.Split(strip(out), "\n") {
+		if w := visibleWidth(line); w > 20 {
+			t.Errorf("empty state line is %d cells, want at most 20: %q", w, line)
+		}
+	}
+	if !strings.Contains(strip(out), "spelling") {
+		t.Errorf("the hint was clipped instead of wrapped: %q", strip(out))
+	}
+
+	// A wide rune in a one-cell column must not hang the wrapper.
+	lines := wrapWords("界", 1)
+	if len(lines) != 1 || lines[0] != "界" {
+		t.Errorf("wrapWords(%q, 1) = %q", "界", lines)
+	}
+}
+
 func TestCardRendersExactWidth(t *testing.T) {
 	theme.SetProfile(colorprofile.TrueColor)
 

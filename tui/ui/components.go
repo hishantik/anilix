@@ -597,7 +597,7 @@ func (l ListItem) Render(width int) string {
 	markerRole := theme.RoleUnset
 	titleRole := theme.Text
 	subtitleRole := theme.Muted
-	trailingRole := theme.Disabled
+	trailingRole := theme.Muted
 	fill := theme.RoleUnset
 
 	switch {
@@ -649,7 +649,7 @@ func (l ListItem) Render(width int) string {
 	if l.Description != "" {
 		rows = append(rows, styledLine([]segment{
 			{text: "  ", role: theme.RoleUnset},
-			{text: l.Description, role: theme.Muted},
+			{text: truncate(l.Description, width-2), role: theme.Muted},
 		}, width, fill))
 	}
 
