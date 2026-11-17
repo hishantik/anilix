@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -47,19 +48,41 @@ func TestUnsupportedDestinationsAreNotSelectable(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 40)
 
-	for _, id := range []navID{navDiscover, navWatchlist} {
-		idx := navIndexOf(id)
-		if idx < 0 {
-			t.Fatalf("destination %v is missing from the drawer", id)
-		}
-		m.nav.cursor = idx
-		if m.navAvailable(id) {
-			t.Errorf("%v must not be available", id)
-		}
-		m.activateNav()
-		if m.state != searchState {
-			t.Errorf("selecting %v changed the screen to %v", id, m.state)
-		}
+	idx := navIndexOf(navDiscover)
+	if idx < 0 {
+		t.Fatalf("destination %v is missing from the drawer", navDiscover)
+	}
+	m.nav.cursor = idx
+	if m.navAvailable(navDiscover) {
+		t.Error("Discover must not be available")
+	}
+	m.activateNav()
+	if m.state != searchState {
+		t.Errorf("selecting %v changed the screen to %v", navDiscover, m.state)
+	}
+}
+
+// TestTheWatchlistDestinationIsReachable checks that the watchlist is a
+// destination of its own: it can be selected from the drawer, even while
+// the account is not connected - the screen carries its own empty state.
+func TestTheWatchlistDestinationIsReachable(t *testing.T) {
+	tempHome(t)
+	config.Set("anilist.token", "")
+
+	m := NewSearchModel()
+	m.resize(100, 40)
+
+	m.nav.cursor = navIndexOf(navWatchlist)
+	if !m.navAvailable(navWatchlist) {
+		t.Fatal("the watchlist is not available")
+	}
+
+	m.activateNav()
+	if m.state != watchlistState {
+		t.Fatalf("selecting the watchlist opened state %d, want the watchlist screen", m.state)
+	}
+	if m.watchlist.Loading {
+		t.Error("the watchlist started a fetch without a token")
 	}
 }
 
@@ -69,8 +92,8 @@ func TestDrawerCursorSkipsUnavailableDestinations(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 40)
 
-	// The cursor starts on Search. Watchlist and Episodes are not
-	// reachable, so the cursor has to jump over them.
+	// The cursor starts on Search. Discover is not reachable, and
+	// Episodes needs a selection, so the cursor has to jump over them.
 	m.nav.cursor = navIndexOf(navSearch)
 
 	m.moveNavCursor(1)
@@ -79,16 +102,21 @@ func TestDrawerCursorSkipsUnavailableDestinations(t *testing.T) {
 	}
 
 	m.moveNavCursor(1)
+	if got := navDestinations[m.nav.cursor].id; got != navWatchlist {
+		t.Errorf("the cursor landed on %v, want Watchlist", got)
+	}
+
+	m.moveNavCursor(1)
 	if got := navDestinations[m.nav.cursor].id; got != navAniList {
-		t.Errorf("the cursor landed on %v, want AniList (Watchlist and Episodes are unavailable)", got)
+		t.Errorf("the cursor landed on %v, want AniList (Episodes is unavailable)", got)
 	}
 
 	m.moveNavCursor(-1)
-	if got := navDestinations[m.nav.cursor].id; got != navHistory {
-		t.Errorf("the cursor landed on %v, want History", got)
+	if got := navDestinations[m.nav.cursor].id; got != navWatchlist {
+		t.Errorf("the cursor landed on %v, want Watchlist", got)
 	}
 
-	m.moveNavCursor(-1)
+	m.moveNavCursor(-2)
 	if got := navDestinations[m.nav.cursor].id; got != navSearch {
 		t.Errorf("the cursor landed on %v, want Search (Discover is unavailable)", got)
 	}

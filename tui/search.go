@@ -103,6 +103,18 @@ type SearchModel struct {
 	watchHistoryCache []historyEntry
 	pendingShowID     string
 
+	// Watchlist
+	//
+	// watchlist holds the saved list of the account while the screen is
+	// open. watchlistCover* cache the rendered artwork of the selected
+	// entry, and watchlistCoverURL remembers which picture they belong
+	// to: a download that comes back after the cursor moved is dropped.
+	watchlist         *WatchlistState
+	watchlistCover    string
+	watchlistCoverW   int
+	watchlistCoverR   int
+	watchlistCoverURL string
+
 	// AniList account screen
 	anilistCursor int // 0 = tracking toggle, 1 = login/logout
 
@@ -199,6 +211,7 @@ func NewSearchModel() *SearchModel {
 		episodeTitlesCache:   make(map[int][]string),
 		episodeMetadataCache: make(map[string]*jikan.Episode),
 		recentSearches:       loadRecentSearches(),
+		watchlist:            &WatchlistState{},
 		trackingEnabled:      config.GetBool("anilist.tracking.enabled") && config.GetString("anilist.token") != "",
 		anilistToken:         config.GetString("anilist.token"),
 		anilistUsername:      config.GetString("anilist.username"),
@@ -308,6 +321,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.state == historyState {
 			return m.handleHistoryKey(msg)
+		}
+
+		if m.state == watchlistState {
+			return m.handleWatchlistKey(msg)
 		}
 
 		if m.state == searchState && m.textInput.Focused() {
@@ -894,6 +911,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CoverImageLoadedMsg:
+		if m.state == watchlistState {
+			// The watchlist recognises its covers by the URL they were
+			// downloaded from: a download that comes back after the
+			// cursor moved belongs to an entry that is no longer shown.
+			if entry := m.watchlistSelected(); entry != nil && msg.Rendered != "" && msg.URL == entry.Cover {
+				m.watchlistCover = msg.Rendered
+				m.watchlistCoverW = msg.Width
+				m.watchlistCoverR = msg.Rows
+			}
+		}
 		if msg.Rendered != "" {
 			// Update the cached metadata with the rendered cover
 			if meta, ok := m.metadataCache[msg.Index]; ok {
@@ -955,6 +982,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the next episode becomes the play glyph.
 			m.updateEpisodeList()
 		}
+
+	case WatchlistLoadedMsg:
+		if m.watchlist == nil {
+			m.watchlist = &WatchlistState{}
+		}
+		m.watchlist.Loading = false
+		m.watchlist.Err = msg.Err
+		m.watchlist.Entries = msg.Entries
+		m.watchlist.Cursor = 0
+		m.watchlist.Scroll = 0
+		cmds = append(cmds, m.watchlistCoverCmd())
 
 	case AniListLoginMsg:
 		m.state = settingsState

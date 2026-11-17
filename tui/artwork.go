@@ -42,6 +42,13 @@ func (m *SearchModel) coverTarget() (width, rows int) {
 			return 0, 0
 		}
 		return leftW, m.detailArtworkRows(leftW, height)
+
+	case watchlistState:
+		_, previewW, height, isNarrow := watchlistLayout(m.contentWidth, m.contentHeight)
+		if isNarrow || previewW < 20 {
+			return 0, 0
+		}
+		return previewW, watchlistArtworkRows(m.watchlistSelected(), previewW, height)
 	}
 
 	return 0, 0

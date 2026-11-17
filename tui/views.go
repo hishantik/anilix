@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/config"
@@ -35,6 +36,8 @@ func (m *SearchModel) View() tea.View {
 		content = m.viewDetailState()
 	case historyState:
 		content = m.viewHistoryState()
+	case watchlistState:
+		content = m.viewWatchlistState()
 	case confirmQuitState:
 		content = m.viewConfirmQuit()
 	case settingsState:
@@ -126,8 +129,13 @@ func (m *SearchModel) renderSearchField() string {
 
 // viewHistoryState renders the watch history.
 //
-// The screen is the list of the episodes that were played: what it was,
-// which episode, and how long ago. Enter resumes the entry.
+// The screen is the list of the episodes that were played, grouped by
+// the day they were played on: what it was, which episode, and when.
+// Enter resumes the entry.
+//
+// The rows carry no playback status beyond what the store records: the
+// store answers "what was I watching?", and it stores the episode and
+// the time, nothing else. Inventing an "80% watched" would be lying.
 func (m *SearchModel) viewHistoryState() string {
 	entries := m.watchHistory()
 	if len(entries) == 0 {
@@ -142,16 +150,43 @@ func (m *SearchModel) viewHistoryState() string {
 		ui.SectionHeader("Watch history", fmt.Sprintf("%d", len(entries)), m.contentWidth),
 		"",
 	}
+
+	// The rows are grouped under the day they were played on: the list of
+	// everything at once reads as a wall, and the day is how a person
+	// remembers it.
+	day := ""
 	for i, e := range entries {
+		label := watchDayLabel(e.At)
+		if label != day {
+			day = label
+			lines = append(lines, theme.Caption.In(theme.Muted).Render(label))
+		}
 		lines = append(lines, ui.ListItem{
 			Title:       e.Name,
-			Description: "Episode " + e.Episode + " · " + agoLabel(e.At),
+			Description: "Episode " + e.Episode,
+			Trailing:    agoLabel(e.At),
 			Selected:    i == m.recentCursor,
 			Focused:     true,
 		}.Render(m.contentWidth))
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// watchDayLabel renders the section label of the day an entry was
+// played on: today, yesterday, or the date itself.
+func watchDayLabel(at time.Time) string {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, at.Location())
+	switch d := today.Sub(day); {
+	case d <= 0:
+		return "Today"
+	case d <= 24*time.Hour:
+		return "Yesterday"
+	default:
+		return at.Format("Jan 2")
+	}
 }
 
 // searchLayout computes two-column dimensions for the search results view.
@@ -590,19 +625,21 @@ const (
 	settingsRowRenderer
 	settingsRowPlayer
 	settingsRowAniList
+	settingsRowVersion
 	settingsRowUpdate
 	settingsRowCount
 )
 
-// settingsRows is the content of the settings sheet.
+// settingsRows is the content of the settings screen.
 var settingsRows = []settingsRowDef{
 	{"Playback", "Quality", "quality"},
 	{"Playback", "AniSkip", "aniskip"},
-	{"Audio", "Sub/Dub", "subdub"},
+	{"Audio & Subtitles", "Sub/Dub", "subdub"},
 	{"Appearance", "Sidebar", "sidebar"},
 	{"Images", "Renderer", "renderer"},
 	{"Player", "Player", "player"},
 	{"AniList", "Account", "anilist"},
+	{"Application", "Version", "version"},
 	{"Application", "Update", "update"},
 }
 
@@ -612,12 +649,25 @@ var settingsRows = []settingsRowDef{
 // terminals that do them.
 var rendererChoices = []string{"auto", "halfblock", "chafa", "ascii"}
 
-// viewSettings renders the settings sheet.
+// viewSettings renders the settings screen.
 //
-// The sheet is grouped, and it scrolls: a phone terminal has no room for
-// eight rows and their section headers at once, so the body is cut to
-// the height the content region has, with the cursor row kept on screen.
+// The screen is adaptive. On a desktop-sized terminal it is a dialog -
+// a structured panel that hovers over the application, closed with
+// escape. On a compact terminal, typically Termux, the dialog would be a
+// cramped box in the middle of the screen: there the settings are a page
+// of their own, full-screen and vertically scrollable. The rows, the
+// order and the keys are the same on both.
 func (m *SearchModel) viewSettings() string {
+	if ui.BreakpointOf(m.width).IsCompact() {
+		lines := make([]string, 0, m.contentHeight)
+		lines = append(lines,
+			ui.SectionHeader("Settings", "v"+version.Version, m.contentWidth),
+			"",
+			m.settingsBody(m.contentHeight-3),
+		)
+		return strings.Join(lines, "\n")
+	}
+
 	body := m.settingsBody(m.contentHeight - 7)
 
 	dialog := ui.Dialog{
@@ -719,6 +769,8 @@ func (m *SearchModel) settingsRowValue(i int, selected bool) string {
 		} else {
 			value = "Not connected"
 		}
+	case "version":
+		value = version.Version
 	case "update":
 		value = m.settingsUpdateValue()
 	}
@@ -770,7 +822,8 @@ func settingsPlayerChoices() []string {
 // settingsAdjust changes the value of the row the cursor is on.
 //
 // Only the rows with a value the app can actually change respond: the
-// account row and the update row act on enter instead.
+// account and the update rows act on enter, and the version row is
+// information only.
 func (m *SearchModel) settingsAdjust(decrease bool) {
 	step := 1
 	if decrease {
@@ -873,46 +926,57 @@ func (m *SearchModel) viewAniListLogin() string {
 
 // viewAniListState renders the AniList account screen.
 //
-// The screen says who is connected, what the tracking does, and carries
-// the actions that exist: log in, log out, and the tracking switch. It
-// does not promise a sync it does not have: the progress of the watched
-// episodes is pushed to AniList after playback, and the screen says so.
+// The screen is a page of its own, in the shape the settings use: a
+// status section that says who is connected, a synchronisation section
+// that says what happens to the progress, and the actions that exist -
+// the tracking switch and the login and logout. It does not promise a
+// sync it does not have: the progress of the watched episodes is pushed
+// to AniList after playback, and the screen says so.
 func (m *SearchModel) viewAniListState() string {
-	lines := make([]string, 0, 8)
+	lines := make([]string, 0, 12)
 
-	// Account
-	var account string
-	if auth.IsLoggedIn() {
+	loggedIn := auth.IsLoggedIn()
+
+	// Authentication
+	lines = append(lines,
+		ui.SectionHeader("Account", "", m.contentWidth),
+	)
+
+	var statusChip string
+	if loggedIn {
+		statusChip = ui.Chip{Label: "Connected", Container: theme.Success}.Render()
+	} else {
+		statusChip = ui.Chip{Label: "Not connected", Container: theme.Error}.Render()
+	}
+	lines = append(lines, ui.InfoRow("Status", statusChip))
+
+	if loggedIn {
 		name := auth.GetUsername()
 		if name == "" {
 			name = "connected"
 		}
-		account = ui.Chip{Label: name, Container: theme.Success}.Render()
-	} else {
-		account = ui.Chip{Label: "Not connected", Container: theme.Error}.Render()
-	}
-	lines = append(lines,
-		ui.SectionHeader("Account", "", m.contentWidth),
-		ui.InfoRow("Status", account),
-	)
-	if auth.IsLoggedIn() {
-		lines = append(lines, ui.InfoRow("Tracking", trackingPill(m.trackingEnabled)))
+		lines = append(lines, ui.InfoRow("Username", name))
 	}
 
 	// Synchronisation
 	lines = append(lines,
 		"",
 		ui.SectionHeader("Synchronisation", "", m.contentWidth),
+	)
+	if loggedIn {
+		lines = append(lines, m.settingsRow("Tracking", trackingPill(m.trackingEnabled), m.anilistCursor == 0))
+	}
+	lines = append(lines,
 		wrapText(mutedLine("Progress syncs to AniList after each episode you play."), m.contentWidth, lipgloss.NewStyle()),
 	)
 
 	// Actions
 	lines = append(lines, "")
 	lines = append(lines, ui.SectionHeader("Actions", "", m.contentWidth))
-	if auth.IsLoggedIn() {
-		lines = append(lines, m.settingsRow("Log out", "", m.anilistCursor == 1))
+	if loggedIn {
+		lines = append(lines, m.settingsRow("Log out", ui.Chip{Label: "Asks first", Container: theme.SurfaceVariant}.Render(), m.anilistCursor == 1))
 	} else {
-		lines = append(lines, m.settingsRow("Log in", "", m.anilistCursor == 1))
+		lines = append(lines, m.settingsRow("Log in", ui.Chip{Label: "Opens the browser", Container: theme.SurfaceVariant}.Render(), m.anilistCursor == 1))
 	}
 
 	return strings.Join(lines, "\n")

@@ -105,6 +105,44 @@ type MediaListEntry struct {
 	Progress int    `json:"progress"`
 }
 
+// WatchlistEntry is one saved anime of the user's list, flattened to the
+// fields the watchlist screen shows.
+type WatchlistEntry struct {
+	AniListID int
+	Title     string
+	Cover     string
+	Status    string  // the list status: CURRENT, PLANNING, COMPLETED, ...
+	Progress  int     // episodes the user marked as watched
+	Total     int     // total episodes, zero when unknown
+	Year      int     // season year, zero when unknown
+	Score     float64 // the average score out of ten, zero when unknown
+	Format    string  // TV, MOVIE, OVA, ...
+}
+
+// MediaListCollectionEntry is one entry of one list of the collection.
+type MediaListCollectionEntry struct {
+	Status   string    `json:"status"`
+	Progress int       `json:"progress"`
+	Media    MediaData `json:"media"`
+}
+
+// MediaListGroup is one named list of the collection, e.g. "Watching".
+type MediaListGroup struct {
+	Name    string                     `json:"name"`
+	Entries []MediaListCollectionEntry `json:"entries"`
+}
+
+// MediaListCollection is the anime list collection of a user.
+type MediaListCollection struct {
+	Lists []MediaListGroup `json:"lists"`
+}
+
+type MediaListCollectionResponse struct {
+	Data struct {
+		MediaListCollection MediaListCollection `json:"MediaListCollection"`
+	} `json:"data"`
+}
+
 type MediaListResponse struct {
 	MediaList *MediaListEntry `json:"MediaList"`
 }

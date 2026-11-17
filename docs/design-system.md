@@ -1,9 +1,10 @@
 # Anilix Design System
 
-**Status:** Complete — every screen (search, detail, settings, dialogs,
-navigation drawer) draws itself from the tokens of `tui/theme` and the
-components of `tui/ui`, including the polish pass: empty/error/retry
-states, time-based progress and the contrast check.
+**Status:** Complete — every screen (search, detail, history, watchlist,
+settings, AniList, dialogs, navigation drawer) draws itself from the
+tokens of `tui/theme` and the components of `tui/ui`, including the
+polish pass: empty/error/retry states, time-based progress and the
+contrast check.
 **Scope:** every pixel the TUI draws. Screens, providers and playback are out of scope.
 
 This document is the specification. The code in `tui/theme` and `tui/ui` is its
@@ -385,7 +386,35 @@ frame and the same focus treatment.
 Never a blank screen. An empty state and an error state must never look the
 same.
 
-### 8.11 Artwork
+### 8.11 The supporting screens
+
+History, watchlist, AniList and settings are pages of the shell, built
+from the same components as the search screen.
+
+- **History** — the played episodes as a structured list, grouped under
+  the day they were played on: today, yesterday, then the date. A row
+  carries the title, the episode, and how long ago it was played. The
+  rows say nothing the store does not know.
+- **Watchlist** — the saved list of the AniList account, fetched when the
+  screen opens. The three phases of a remote screen are explicit:
+  loading, error, and content, the empty ones included - a terminal that
+  is not connected gets the words, not a spinner. On a terminal with
+  room for two columns the selected entry gets the artwork preview.
+- **AniList** — the account page: authentication status, the account
+  name, the tracking switch, and the actions that exist. It does not
+  promise a sync it does not have: progress is pushed after playback,
+  and the page says so. Logging out asks first.
+- **Settings** — grouped rows with the label in the text role and the
+  value in a chip, so label and value never share a style. The groups
+  follow the settings the application has: Playback, Audio &
+  Subtitles, Appearance, Images, Player, AniList, Application. The
+  screen is adaptive: a wide terminal gets the dialog (elevation 3,
+  clamped by `ui.OverlayWidth`), a compact terminal gets a full-screen
+  page that scrolls - no cramped centred dialog on a phone. The rows,
+  the order and the keys are the same on both, and the configuration
+  keys behind them are unchanged.
+
+### 8.12 Artwork
 
 The cover art is rendered by the adaptive renderer in `tui/renderer.go`;
 the screen only asks `renderArtwork` for a picture of a size.
@@ -527,6 +556,7 @@ expanded; plus `NO_COLOR=1` and a 16 colour terminal.
 | 4 — Dialogs and sheets | Data-driven settings, confirm dialog, clamped overlays | done |
 | 5 — Navigation drawer | Drawer destinations, navigation stack | done |
 | 6 — Polish | Empty/error/retry states, time-based progress, contrast pass | done |
+| 7 — Supporting screens | History, watchlist (the AniList list), AniList page, adaptive settings | done |
 
 The pre-redesign palette (`tui/theme/legacy.go` and the `Theme` variable of
 `tui/theme.go`) is gone: every screen of the application draws itself from

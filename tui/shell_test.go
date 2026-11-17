@@ -168,13 +168,18 @@ func TestArrowKeysMoveTheDrawerCursor(t *testing.T) {
 
 	// The destinations that cannot be opened are skipped.
 	model = applyKey(t, model, keyRune('j'))
+	if got := navDestinations[model.nav.cursor].id; got != navWatchlist {
+		t.Fatalf("the j key moved the cursor to %v, want Watchlist", got)
+	}
+
+	model = applyKey(t, model, tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := navDestinations[model.nav.cursor].id; got != navAniList {
-		t.Fatalf("the j key moved the cursor to %v, want AniList", got)
+		t.Fatalf("the down key moved the cursor to %v, want AniList (Episodes is unavailable)", got)
 	}
 
 	model = applyKey(t, model, tea.KeyPressMsg{Code: tea.KeyUp})
-	if got := navDestinations[model.nav.cursor].id; got != navHistory {
-		t.Errorf("the up key moved the cursor to %v, want History", got)
+	if got := navDestinations[model.nav.cursor].id; got != navWatchlist {
+		t.Errorf("the up key moved the cursor to %v, want Watchlist", got)
 	}
 }
 

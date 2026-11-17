@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/source"
 )
@@ -79,6 +80,7 @@ type CoverImageLoadedMsg struct {
 	KittyTransmitSeq string // APC sequence for Kitty graphics (empty for non-Kitty)
 	KittyImageID     uint32 // Image ID for Kitty graphics cleanup
 	Index            int    // Result index this cover belongs to
+	URL              string // The URL the cover was downloaded from, so a late answer for an old entry is recognised
 	Width            int    // The width the cover was rendered at
 	Rows             int    // The number of rows the cover was rendered at
 }
@@ -88,6 +90,13 @@ type TrackingUpdateMsg struct {
 	Status   string
 	Progress int
 	Err      error
+}
+
+// WatchlistLoadedMsg is sent when the saved list of the account came back
+// from AniList, or when fetching it failed.
+type WatchlistLoadedMsg struct {
+	Entries []*anilist.WatchlistEntry
+	Err     error
 }
 
 // TrackingStatusLoadedMsg is sent when the current tracking status for an anime is fetched.

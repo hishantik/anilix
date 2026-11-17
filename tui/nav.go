@@ -50,15 +50,15 @@ type navDestination struct {
 
 // navDestinations is the content of the drawer, in the order it is drawn.
 //
-// The list covers the destinations the design calls for. "Discover" and
-// "Watchlist" have no counterpart in the application yet - there is no
-// seasonal catalogue and no watchlist store - so they are listed as
-// unavailable instead of being faked with an empty screen.
+// The list covers the destinations the design calls for. "Discover" has
+// no counterpart in the application yet - there is no seasonal
+// catalogue - so it is listed as unavailable instead of being faked with
+// an empty screen. "Watchlist" is the saved list of the AniList account.
 var navDestinations = []navDestination{
 	{id: navDiscover, label: "Discover", icon: theme.IconDiscover, hint: "n/a", supported: false},
 	{id: navSearch, label: "Search", icon: theme.IconSearch, supported: true},
 	{id: navHistory, label: "History", icon: theme.IconHistory, supported: true},
-	{id: navWatchlist, label: "Watchlist", icon: theme.IconWatchlist, hint: "n/a", supported: false},
+	{id: navWatchlist, label: "Watchlist", icon: theme.IconWatchlist, supported: true},
 	{id: navEpisodes, label: "Episodes", icon: theme.IconEpisode, supported: true},
 	{id: navAniList, label: "AniList", icon: theme.IconAniList, supported: true},
 	{id: navSettings, label: "Settings", icon: theme.IconSettings, supported: true},
@@ -101,7 +101,7 @@ func (m *SearchModel) navVisible() bool {
 // showcase) take the keyboard away from the drawer.
 func (m *SearchModel) navFocusable() bool {
 	switch m.state {
-	case searchState, animeState, detailState, historyState:
+	case searchState, animeState, detailState, historyState, watchlistState:
 		return true
 	}
 	return false
@@ -261,6 +261,8 @@ func (m *SearchModel) activeNav() navID {
 		return navSearch
 	case historyState:
 		return navHistory
+	case watchlistState:
+		return navWatchlist
 	case detailState:
 		return navEpisodes
 	case settingsState:
@@ -287,6 +289,8 @@ func navActiveOf(state tuiState) navID {
 		return navSearch
 	case historyState:
 		return navHistory
+	case watchlistState:
+		return navWatchlist
 	case detailState:
 		return navEpisodes
 	case settingsState:
@@ -442,6 +446,8 @@ func (m *SearchModel) activateNav() tea.Cmd {
 		cmd = m.gotoSearch()
 	case navHistory:
 		cmd = m.gotoHistory()
+	case navWatchlist:
+		cmd = m.gotoWatchlist()
 	case navEpisodes:
 		cmd = m.gotoEpisodes()
 	case navAniList:

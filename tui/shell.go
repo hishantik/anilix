@@ -241,10 +241,13 @@ func (m *SearchModel) hintList() []string {
 
 	case settingsState:
 		hints := []string{ui.KeyHint("↑↓", "move")}
-		if m.settingsState.Cursor <= 1 {
-			// The first two rows are a value that is changed in place.
+		switch {
+		case m.settingsState.Cursor <= settingsRowPlayer:
+			// The rows up to the player are values changed in place.
 			hints = append(hints, ui.KeyHint("←→", "change"))
-		} else {
+		case m.settingsState.Cursor == settingsRowVersion:
+			// The version is read only.
+		default:
 			hints = append(hints, ui.KeyHint("enter", "select"))
 		}
 		return append(hints, ui.KeyHint("esc", "close"))
@@ -256,6 +259,14 @@ func (m *SearchModel) hintList() []string {
 		}
 
 	case historyState:
+		return []string{
+			ui.KeyHint("↑↓", "browse"),
+			ui.KeyHint("enter", "search"),
+			ui.KeyHint("esc", "back"),
+			ui.KeyHint("ctrl+c", "quit"),
+		}
+
+	case watchlistState:
 		return []string{
 			ui.KeyHint("↑↓", "browse"),
 			ui.KeyHint("enter", "search"),

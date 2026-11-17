@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/hishantik/anilix/config"
+	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -16,6 +17,9 @@ const (
 	animeState
 	detailState
 	historyState
+	// watchlistState is the saved list of the account: the entries AniList
+	// keeps for the user.
+	watchlistState
 	confirmQuitState
 	settingsState
 	anilistLoginState
@@ -102,6 +106,17 @@ type SettingsState struct {
 	UpdateStatus   string // "", "checking", "updated", "error"
 	UpdateVersion  string // latest version tag, e.g. "v1.7.0"
 	UpdateError    error
+}
+
+// WatchlistState holds the state for the watchlist screen: the saved list
+// of the account, with the three phases a fetched screen has - loading,
+// error and content.
+type WatchlistState struct {
+	Loading bool
+	Err     error
+	Entries []*anilist.WatchlistEntry
+	Cursor  int
+	Scroll  int // the first row of the visible window of a long list
 }
 
 // NewSearchState creates a new search state

@@ -107,9 +107,9 @@ func TestSearchScreenShowsTheField(t *testing.T) {
 	}
 }
 
-// TestSettingsDialogIsClamped checks that the settings sheet fits on a
-// phone screen.
-func TestSettingsDialogIsClamped(t *testing.T) {
+// TestTheSettingsScreenIsReadableOnAPhone checks that the settings screen
+// fits on a phone screen.
+func TestTheSettingsScreenIsReadableOnAPhone(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(40, 30)
 
@@ -119,8 +119,36 @@ func TestSettingsDialogIsClamped(t *testing.T) {
 			t.Errorf("row %d is %d cells wide: %q", i, got, line)
 		}
 	}
-	if !strings.Contains(view, "Settings") {
-		t.Errorf("the settings sheet lost its title:\n%s", view)
+	if !strings.Contains(strings.ToLower(view), "settings") {
+		t.Errorf("the settings screen lost its title:\n%s", view)
+	}
+
+	// On a phone the settings are a page, not a dialog: the content starts
+	// at the left edge instead of being centred in a box.
+	if strings.HasPrefix(view, " ") {
+		t.Errorf("the compact settings page is centred like a dialog:\n%q", view)
+	}
+}
+
+// TestTheSettingsScreenIsADialogOnDesktop checks that a wide terminal gets
+// the dialog and that the dialog stays inside the screen.
+func TestTheSettingsScreenIsADialogOnDesktop(t *testing.T) {
+	m := NewSearchModel()
+	m.resize(100, 40)
+
+	view := shellStrip(m.viewSettings())
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 100 {
+			t.Errorf("row %d is %d cells wide: %q", i, got, line)
+		}
+	}
+	// The dialog is centred: the page a phone gets is not.
+	if !strings.HasPrefix(view, " ") {
+		t.Errorf("the desktop settings screen is not a dialog:\n%q", view)
+	}
+	// The rows are within the dialog: the body never exceeds the dialog.
+	if strings.Count(view, "Playback") != 1 {
+		t.Errorf("the rows leaked out of the dialog:\n%s", view)
 	}
 }
 
