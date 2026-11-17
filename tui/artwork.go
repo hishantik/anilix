@@ -47,6 +47,29 @@ func (m *SearchModel) coverTarget() (width, rows int) {
 	return 0, 0
 }
 
+// refreshCoverForProtocolChange redraws the artwork on screen when the
+// renderer learned a better protocol after the cover was rendered.
+//
+// The terminal answers the capability query while the first cover is
+// already on its way, and a cover that was encoded by a weaker protocol
+// should not wait for a screen change to be drawn by the better one.
+func (m *SearchModel) refreshCoverForProtocolChange() tea.Cmd {
+	if m.state != searchState && m.state != animeState && m.state != detailState {
+		return nil
+	}
+	meta := m.searchState.Metadata
+	if meta == nil || meta.CoverImage == "" {
+		return nil
+	}
+
+	// Forget the size the cover was rendered at: ensureCover only renders
+	// a cover that is missing or mis-sized for the panel it lands in.
+	meta.CoverImage = ""
+	meta.CoverWidth = 0
+	meta.CoverRows = 0
+	return m.coverCmd()
+}
+
 // clearCoverCmd drops the artwork the terminal still holds for the
 // previous screen.
 //

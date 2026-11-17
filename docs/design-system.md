@@ -399,11 +399,18 @@ the screen only asks `renderArtwork` for a picture of a size.
   renderer (`kitty`, `sixel`, `iterm2`, `halfblock`, `chafa`) or turns
   the artwork off (`ascii`/`none`). A configured renderer is honoured
   only when the terminal actually advertises it — a converter on the
-  PATH is not a terminal capability, and the Termux terminal does not do
-  SIXEL even when one is installed — otherwise the choice falls back to
+  PATH is not a terminal capability — otherwise the choice falls back to
   the detected chain. SIXEL and iTerm2 are never in the detected chain:
   they draw over the text grid of terminals that keep images outside of
   it, so they are opt-in.
+- **The capability query.** The application asks the terminal what it can
+  draw when it starts: the answer to the device attributes query (DA1)
+  carries attribute 4 where the terminal speaks SIXEL — the way Termux
+  advertises its graphics support in the builds that carry it. An answer
+  that arrives after a cover was drawn redraws it with the better
+  protocol; a terminal that never answers simply keeps the renderers its
+  environment proves, and a Termux build from before the graphics
+  support merged falls back to half-blocks.
 - **Lifecycle.** Covers are downloaded once and cached on disk, the
   rendered output of the self-contained protocols is cached in memory,
   and a cover is re-rendered only when its size changes. A screen change

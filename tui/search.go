@@ -25,6 +25,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type SearchModel struct {
@@ -218,13 +220,28 @@ func newProgress() progress.Model {
 }
 
 func (m *SearchModel) Init() tea.Cmd {
-	return nil
+	// Ask the terminal what it can draw. The answer carries the SIXEL bit
+	// where the terminal speaks the protocol - Termux advertises its
+	// graphics support this way - and decides whether a configured SIXEL
+	// renderer is honoured. A terminal that does not answer simply keeps
+	// the renderers the environment already proves.
+	return tea.Raw(ansi.RequestPrimaryDeviceAttributes)
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case uv.PrimaryDeviceAttributesEvent:
+		// The terminal answered the capability query. Attribute 4 is the
+		// SIXEL bit - the way Termux advertises its graphics support.
+		// When the answer changes the chain, the artwork on screen is
+		// redrawn with the better protocol.
+		if HandlePrimaryDeviceAttributes(msg) {
+			return m, m.refreshCoverForProtocolChange()
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		// Crossing the width threshold switches the drawer between its
 		// persistent and its modal form. The modal drawer is closed on the

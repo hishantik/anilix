@@ -10,13 +10,15 @@ import (
 	"github.com/hishantik/anilix/config"
 )
 
-// clearArtEnv resets every environment variable the detection reads, so a
-// test sees only the terminal it sets itself.
+// clearArtEnv resets every environment variable the detection reads, and
+// the evidence of the capability query, so a test sees only the terminal
+// it sets itself.
 func clearArtEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"TERM", "TERM_PROGRAM", "COLORTERM", "KITTY_WINDOW_ID"} {
 		t.Setenv(key, "")
 	}
+	resetDeviceAttributes()
 }
 
 // chainHas reports whether the chain contains a protocol.
@@ -109,6 +111,55 @@ func TestTheAutoChainNeverPicksInBandProtocols(t *testing.T) {
 	}
 	if chainHas(chain, ProtocolITerm2) {
 		t.Error("the automatic chain picked the iTerm2 protocol")
+	}
+}
+
+// TestTheTerminalAdvertisesSixelInDeviceAttributes checks the DA1 path of
+// the detection: attribute 4 of the answer is the SIXEL bit, and Termux
+// sets it in the builds that carry its graphics support. A configured
+// SIXEL renderer is honoured once the terminal has spoken.
+func TestTheTerminalAdvertisesSixelInDeviceAttributes(t *testing.T) {
+	clearArtEnv(t)
+	t.Setenv("TERM", "xterm-256color")
+	t.Cleanup(resetDeviceAttributes)
+
+	// Without an answer the plain name claims nothing.
+	if DetectSixelSupport() {
+		t.Fatal("a terminal that answered nothing claimed SIXEL")
+	}
+
+	// An answer without the SIXEL bit changes nothing. This is the answer
+	// of a Termux build from before its graphics support merged.
+	if HandlePrimaryDeviceAttributes([]int{64, 1, 2, 6, 9, 15, 18, 21, 22}) {
+		t.Error("an answer without the SIXEL bit changed the renderer")
+	}
+	if DetectSixelSupport() {
+		t.Error("attribute 4 missing, but SIXEL was detected")
+	}
+
+	// The answer of a Termux build with graphics support: attribute 4 is
+	// in the list.
+	if !HandlePrimaryDeviceAttributes([]int{64, 1, 2, 4, 6, 9, 15, 18, 21, 22}) {
+		t.Error("the SIXEL bit was not noticed")
+	}
+	if !DetectSixelSupport() {
+		t.Error("the terminal advertised SIXEL, but it was not detected")
+	}
+
+	// The same answer twice is not a change: the screen must not redraw.
+	if HandlePrimaryDeviceAttributes([]int{64, 1, 2, 4, 6, 9, 15, 18, 21, 22}) {
+		t.Error("a repeated answer was treated as a change")
+	}
+
+	// The evidence makes a configured SIXEL renderer lead the chain.
+	config.Set("artwork.renderer", "sixel")
+	defer config.Set("artwork.renderer", "auto")
+	chain := rendererChain()
+	if len(chain) == 0 || chain[0] != ProtocolSixel {
+		t.Errorf("the advertised SIXEL renderer did not lead the chain: %v", chain)
+	}
+	if !chainHas(chain, ProtocolNone) {
+		t.Error("the chain lost the placeholder fallback")
 	}
 }
 

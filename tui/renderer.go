@@ -5,6 +5,7 @@ import (
 	"image"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hishantik/anilix/config"
 )
@@ -27,8 +28,11 @@ import (
 // images outside of it, which breaks a full-screen interface on repaint.
 // They are opt-in through the configuration, and the configuration is
 // only honoured when the terminal actually advertises the protocol: a
-// converter on the PATH is not a terminal capability, and the Termux
-// terminal does not do SIXEL even when one is installed.
+// converter on the PATH is not a terminal capability. The advertisement
+// the renderer trusts is the terminal's own answer to the device
+// attributes query - Termux sets the SIXEL bit there in the builds that
+// carry its graphics support - or, failing that, a terminal name that is
+// specific about SIXEL.
 
 // rendererNames maps the words the configuration uses to the protocols.
 var rendererNames = map[string]Protocol{
@@ -53,6 +57,53 @@ func configuredRenderer() (Protocol, bool) {
 	}
 	p, ok := rendererNames[name]
 	return p, ok
+}
+
+// The terminal's own word about what it can draw.
+//
+// Terminals answer the primary device attributes query (DA1, "CSI c") with
+// a list of attributes, and attribute 4 is the SIXEL bit. Termux advertises
+// its graphics support this way in the builds that carry it, and so does
+// every other implementation that speaks the protocol. The answer is the
+// strongest evidence the renderer accepts: a converter on the PATH is not
+// a capability, and a terminal name claims nothing unless it is specific.
+var da1Sixel atomic.Bool
+
+// HandlePrimaryDeviceAttributes records what the terminal reported in its
+// answer to the DA1 query. It reports whether the answer changed what the
+// renderer knows, so the artwork on screen can be redrawn with the better
+// protocol the terminal just revealed.
+func HandlePrimaryDeviceAttributes(attrs []int) bool {
+	sawSixel := false
+	for _, a := range attrs {
+		if a == 4 {
+			sawSixel = true
+			break
+		}
+	}
+
+	wasSixel := da1Sixel.Load()
+	if sawSixel {
+		da1Sixel.Store(true)
+		// A SIXEL attempt that failed before the terminal answered was
+		// made under wrong assumptions: give the protocol another chance.
+		renderFailuresMu.Lock()
+		delete(renderFailures, ProtocolSixel)
+		renderFailuresMu.Unlock()
+	}
+	return sawSixel != wasSixel
+}
+
+// sixelAdvertised reports whether the terminal answered the DA1 query with
+// the SIXEL attribute.
+func sixelAdvertised() bool {
+	return da1Sixel.Load()
+}
+
+// resetDeviceAttributes forgets the evidence of the capability query. It
+// exists for the tests.
+func resetDeviceAttributes() {
+	da1Sixel.Store(false)
 }
 
 // protocolDetected reports whether the terminal advertises a protocol.

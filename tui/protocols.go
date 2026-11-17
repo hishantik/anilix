@@ -29,10 +29,15 @@ const (
 // DetectSixelSupport reports whether the terminal advertises SIXEL.
 //
 // The check is deliberately narrow. A converter on the PATH is not a
-// terminal capability, and the Termux terminal does not do SIXEL even
-// when one is installed: the name of the terminal is the only evidence
-// here, and an unspecific name claims nothing.
+// terminal capability: the name of the terminal is the only static
+// evidence here, and an unspecific name claims nothing. The strongest
+// evidence is dynamic: the terminal's own answer to the device attributes
+// query, where attribute 4 is the SIXEL bit - the way Termux advertises
+// its graphics support in the builds that carry it.
 func DetectSixelSupport() bool {
+	if sixelAdvertised() {
+		return true
+	}
 	term, prog := termAndProgram()
 	for _, marker := range []string{"sixel", "foot", "mlterm", "wezterm", "contour", "rio"} {
 		if strings.Contains(term, marker) || strings.Contains(prog, marker) {
