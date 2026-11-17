@@ -227,6 +227,7 @@ func downloadCoverCmd(coverURL string, width, rows, index int) tea.Cmd {
 			Rendered:         result.Placeholder,
 			KittyTransmitSeq: result.TransmitSeq,
 			KittyImageID:     result.KittyImageID,
+			SixelSeq:         result.SixelSeq,
 			Index:            index,
 			Width:            width,
 			Rows:             rows,

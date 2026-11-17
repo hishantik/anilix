@@ -208,6 +208,7 @@ func resetRenderFailures() {
 type ArtworkRender struct {
 	Placeholder  string // the text of the view
 	TransmitSeq  string // the APC sequence for tea.Raw (Kitty only)
+	SixelSeq     string // the DCS sixel sequence for tea.Raw
 	KittyImageID uint32
 	Protocol     Protocol
 }
@@ -275,7 +276,7 @@ func RenderAdaptive(img image.Image, cols, rows int, cachePath, coverURL string)
 				return hit
 			}
 			result := renderWithProtocol(img, p, cols, rows, cachePath)
-			if result.Placeholder == "" {
+			if result.Placeholder == "" && result.SixelSeq == "" {
 				markProtocolFailed(p)
 				continue
 			}
@@ -319,7 +320,17 @@ func renderWithProtocol(img image.Image, p Protocol, cols, rows int, cachePath s
 		// the placeholder - never a renderer the chain did not choose.
 		return ArtworkRender{Placeholder: placeholder, Protocol: p}
 	case ProtocolSixel:
-		return ArtworkRender{Placeholder: renderSixelCover(img, cols, rows), Protocol: p}
+		// The sixel stream is a DCS sequence, and the ultraviolet
+		// renderer strips sequences it cannot read out of the view text -
+		// the way it strips the APC of the kitty protocol. The sixel
+		// travels to the terminal through tea.Raw instead, like the
+		// kitty image. The placeholder keeps the shape of the poster in
+		// the frame while the sixel draws the picture.
+		return ArtworkRender{
+			SixelSeq:    renderSixelCover(img, cols, rows),
+			Placeholder: sixelPlaceholder(cols, rows),
+			Protocol:    p,
+		}
 	case ProtocolITerm2:
 		return ArtworkRender{Placeholder: renderITerm2Cover(img, cols, rows), Protocol: p}
 	}

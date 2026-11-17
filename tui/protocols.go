@@ -98,7 +98,7 @@ func runChafaSixel(img image.Image, cols, rows int) (string, error) {
 	}
 
 	// chafa reads the image from stdin when the path is "-". The sixel
-	// format is sixels (sixel is accepted as an alias).
+	// format is "sixels" (sixel is accepted as an alias).
 	cmd := exec.Command("chafa",
 		"--polite=on",
 		"--probe=off",
@@ -113,6 +113,30 @@ func runChafaSixel(img image.Image, cols, rows int) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+// sixelPlaceholder returns lightweight placeholder text to keep the
+// artwork frame shaped while the sixel draws the picture underneath.
+//
+// Unlike the kitty protocol, sixel does not have a Unicode placeholder
+// mechanism: the terminal has no cell-level pointer to tell where the
+// image sits. The frame must draw on top of the sixel pixels, and the
+// frame cells become the "placeholder" that the layout uses to size
+// itself. The exact characters do not matter: they are overwritten by
+// whatever the terminal draws when the sixel prints at those cells.
+func sixelPlaceholder(cols, rows int) string {
+	if rows < 3 {
+		return ""
+	}
+	inner := cols - 2
+	if inner < 1 {
+		inner = 1
+	}
+	lines := make([]string, 0, rows)
+	for i := 0; i < rows; i++ {
+		lines = append(lines, strings.Repeat("\u2003", inner)) // U+2003 EM SPACE
+	}
+	return strings.Join(lines, "\n")
 }
 
 // encodeSixel encodes an image as SIXEL.

@@ -299,6 +299,44 @@ func TestTheChafaSixelFraming(t *testing.T) {
 	}
 }
 
+// TestTheSixelViaTeaRaw checks that renderWithProtocol for ProtocolSixel
+// returns both the sixel sequence (for tea.Raw) and a non-empty placeholder
+// so the frame keeps its shape. The sixel sequence is a DCS that the
+// ultraviolet renderer strips from view text, which is why it must travel
+// through tea.Raw() the same way the kitty APC does.
+func TestTheSixelViaTeaRaw(t *testing.T) {
+	if !hasBinary("chafa") {
+		t.Skip("chafa not installed")
+	}
+	clearArtEnv(t)
+	t.Setenv("TERM", "foot") // has sixel
+	t.Setenv("TERM_PROGRAM", "")
+	t.Cleanup(resetDeviceAttributes)
+	HandlePrimaryDeviceAttributes([]int{64, 1, 2, 4, 6, 9, 15, 18, 21, 22})
+	t.Cleanup(resetRenderFailures)
+
+	img := image.NewRGBA(image.Rect(0, 0, 4, 12))
+	for i := range img.Pix {
+		img.Pix[i] = 0xff
+	}
+
+	result := renderWithProtocol(img, ProtocolSixel, 4, 12, "")
+	if result.SixelSeq == "" {
+		t.Fatal("SixelSeq is empty: chafa sixel path produced nothing")
+	}
+	if !strings.HasPrefix(result.SixelSeq, "\x1bP0;1;0q") {
+		t.Errorf("SixelSeq is not a sixel stream: %q", result.SixelSeq[:30])
+	}
+	if result.Placeholder == "" {
+		t.Error("Placeholder is empty: the frame has no shape")
+	}
+	// Placeholder must cover the right number of rows.
+	lines := strings.Split(result.Placeholder, "\n")
+	if len(lines) != 12 {
+		t.Errorf("Placeholder has %d rows, want 12", len(lines))
+	}
+}
+
 // TestTheSixelEncoder checks the framing of the SIXEL output: the DCS
 // introducer, one colour definition per used colour, a band separator
 // when the picture is taller than one band, and the string terminator.

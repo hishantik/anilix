@@ -965,16 +965,20 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Metadata.CoverWidth = msg.Width
 				m.searchState.Metadata.CoverRows = msg.Rows
 			}
-			// For Kitty protocol, transmit the image to terminal memory
-			// via tea.Raw() (bypasses the ultraviolet renderer).
-			// Delete old image first, then transmit the new one.
+			// For Kitty and SIXEL protocols the image is transmitted outside
+			// the view text: the ultraviolet renderer strips sequences it
+			// cannot read (APC/DCS), so tea.Raw() sends them directly to the
+			// terminal. Delete the old image first, then transmit the new.
 			if msg.KittyTransmitSeq != "" {
 				oldID := m.kittyImageID
 				m.kittyImageID = msg.KittyImageID
-				return m, tea.Batch(
+				cmds = append(cmds,
 					DeleteKittyImageCmd(oldID),
 					tea.Raw(msg.KittyTransmitSeq),
 				)
+			}
+			if msg.SixelSeq != "" {
+				cmds = append(cmds, tea.Raw(msg.SixelSeq))
 			}
 		}
 
