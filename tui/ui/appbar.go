@@ -65,10 +65,12 @@ func (a AppBar) renderLeft() string {
 
 	if a.Menu {
 		role := theme.Muted
+		style := lipgloss.NewStyle()
 		if a.MenuOpen {
 			role = theme.Primary
+			style = style.Bold(true)
 		}
-		parts = append(parts, theme.Fg(lipgloss.NewStyle().Bold(true), role).Render(theme.Icon(theme.IconMenu)))
+		parts = append(parts, theme.Fg(style, role).Render(theme.Icon(theme.IconMenu)))
 		parts = append(parts, " ")
 	}
 	if a.Brand != "" {

@@ -153,8 +153,10 @@ var hex = map[Role]string{
 	Muted:    "#CAC4D0",
 	Disabled: "#6A6E7A",
 
-	// Overlay
-	Scrim: "#0A0C10",
+	// Overlay. Pure black: the app background is already near-black, so a
+	// near-black scrim would be invisible and the modal drawer would not
+	// read as a layer on top of the application.
+	Scrim: "#000000",
 }
 
 // names gives every role a stable, human-readable name. Used by the
