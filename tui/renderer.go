@@ -262,10 +262,10 @@ func renderWithProtocol(img image.Image, p Protocol, cols, rows int, cachePath s
 				placeholder = result
 			}
 		}
-		if placeholder == "" {
-			// chafa failed for this cover: half-block still works.
-			placeholder = renderHalfBlock(img, cols, rows)
-		}
+		// A failed chafa returns nothing: the chain moves on to the next
+		// protocol. Half-block sits ahead of chafa in the chain whenever
+		// the terminal has true colour, and the fallback for the rest is
+		// the placeholder - never a renderer the chain did not choose.
 		return ArtworkRender{Placeholder: placeholder, Protocol: p}
 	case ProtocolSixel:
 		return ArtworkRender{Placeholder: renderSixelCover(img, cols, rows), Protocol: p}
