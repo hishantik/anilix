@@ -732,8 +732,10 @@ var settingsRows = []settingsRowDef{
 // The renderers the settings sheet offers. The chain validates the
 // choice anyway: kitty is picked by auto when the terminal has it, and
 // the in-band protocols are edited in the file by the people who use
-// terminals that do them.
-var rendererChoices = []string{"auto", "halfblock", "chafa", "ascii"}
+// terminals that do them. SIXEL is offered because it now renders
+// through chafa, which keeps the full palette; a terminal without SIXEL
+// simply ignores the choice and falls back to the detected chain.
+var rendererChoices = []string{"auto", "sixel", "halfblock", "chafa", "ascii"}
 
 // viewSettings renders the settings screen.
 //

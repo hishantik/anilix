@@ -537,6 +537,22 @@ func TestTheRendererSettingIsWired(t *testing.T) {
 	if got := rendererChoice(); got != "auto" {
 		t.Errorf("the choice wrapped to %q, want auto", got)
 	}
+
+	// SIXEL is a first-class choice now that it renders through chafa.
+	found := false
+	for _, c := range rendererChoices {
+		if c == "sixel" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("SIXEL is missing from the renderer choices")
+	}
+	m.settingsAdjust(false)
+	if got := rendererChoice(); got != "sixel" {
+		t.Errorf("stepping from auto reached %q, want sixel", got)
+	}
 }
 
 // TestTheSidebarSettingIsWired checks that the sidebar row flips the
