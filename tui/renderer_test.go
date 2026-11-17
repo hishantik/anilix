@@ -266,6 +266,39 @@ func TestAFailedProtocolFallsThrough(t *testing.T) {
 	}
 }
 
+// TestTheChafaSixelFraming checks that renderSixelCover routes through the
+// chafa binary and produces a well-formed sixel stream. It requires chafa
+// on the PATH; without it the native encoder is the fallback.
+func TestTheChafaSixelFraming(t *testing.T) {
+	if !hasBinary("chafa") {
+		t.Skip("chafa not installed")
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 4, 12))
+	red := color.RGBA{R: 0xff, G: 0, B: 0, A: 0xff}
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 4; x++ {
+			img.Set(x, y, red)
+		}
+	}
+
+	out := renderSixelCover(img, 4, 12)
+	if out == "" {
+		t.Fatal("chafa sixel returned nothing")
+	}
+	if !strings.HasPrefix(out, "\x1bP0;1;0q") {
+		t.Errorf("the chafa sixel output lost its DCS introducer: %q", out)
+	}
+	if !strings.HasSuffix(out, "\x1b\\") {
+		t.Errorf("the chafa sixel output lost its string terminator: %q", out)
+	}
+	if !strings.Contains(out, ";2;") {
+		t.Errorf("the chafa sixel output lost its colour definition: %q", out)
+	}
+	if strings.Contains(out, "\x1b[?25") {
+		t.Errorf("chafa sixel leaked cursor hide/show instead of polite output: %q", out)
+	}
+}
+
 // TestTheSixelEncoder checks the framing of the SIXEL output: the DCS
 // introducer, one colour definition per used colour, a band separator
 // when the picture is taller than one band, and the string terminator.

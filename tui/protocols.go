@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"os/exec"
 	"strings"
 )
 
@@ -59,13 +60,59 @@ func DetectITerm2Support() bool {
 // renderSixelCover renders a cover as a SIXEL image for the given cell
 // size. The result is in-band text: the terminal draws the pixels where
 // the interface prints the sequence.
+//
+// It first tries chafa, which keeps the full 24-bit palette and dithers,
+// falling back to the native 3-3-2 encoder when chafa is missing or
+// fails. Both paths draw the same pixel grid (cols*8 rows*16), so the
+// raster covers exactly the same cells either way.
 func renderSixelCover(img image.Image, cols, rows int) string {
 	if img == nil || cols < 1 || rows < 1 {
 		return ""
 	}
+	if hasBinary("chafa") {
+		if out, err := runChafaSixel(img, cols, rows); err == nil && out != "" {
+			return out
+		}
+	}
+	// Fallback: native encoder
 	pixelW := cols * cellPixelWidth
 	pixelH := rows * cellPixelHeight
 	return encodeSixel(ResizeImage(img, pixelW, pixelH))
+}
+
+// runChafaSixel renders an image as SIXEL through the chafa binary.
+//
+// The image is resized to the same pixel grid the native encoder paints,
+// then piped to chafa on stdin. "--exact-size=on" keeps the raster at
+// those source pixels and "--polite=on" suppresses the cursor hide/show
+// that would otherwise bookend the stream, so the sixel stays clean
+// in-band text from "ESC P" to "ESC \".
+func runChafaSixel(img image.Image, cols, rows int) (string, error) {
+	pixelW := cols * cellPixelWidth
+	pixelH := rows * cellPixelHeight
+	resized := ResizeImage(img, pixelW, pixelH)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, resized); err != nil {
+		return "", err
+	}
+
+	// chafa reads the image from stdin when the path is "-". The sixel
+	// format is sixels (sixel is accepted as an alias).
+	cmd := exec.Command("chafa",
+		"--polite=on",
+		"--probe=off",
+		"-f", "sixels",
+		"--exact-size=on",
+		"--work=9",
+		"-",
+	)
+	cmd.Stdin = &buf
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
 // encodeSixel encodes an image as SIXEL.
