@@ -27,10 +27,10 @@ type SkipInterval struct {
 }
 
 type Options struct {
-	Title      string
-	Subtitles  []string
-	Referrer   string
-	SkipTimes  []SkipInterval
+	Title     string
+	Subtitles []string
+	Referrer  string
+	SkipTimes []SkipInterval
 }
 
 var (

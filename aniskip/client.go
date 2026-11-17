@@ -18,8 +18,8 @@ type SkipInterval struct {
 }
 
 type apiResponse struct {
-	Found   bool           `json:"found"`
-	Results []apiSkipTime  `json:"results"`
+	Found   bool          `json:"found"`
+	Results []apiSkipTime `json:"results"`
 }
 
 type apiSkipTime struct {

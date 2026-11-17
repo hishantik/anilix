@@ -32,7 +32,7 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 	// because Go's default resolver tries [::1]:53 which fails in Termux.
 	client := &http.Client{
 		Transport: &http.Transport{
-			DialContext: proxyDialContext,
+			DialContext:         proxyDialContext,
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 5,
 			IdleConnTimeout:     5 * time.Minute,

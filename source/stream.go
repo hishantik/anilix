@@ -9,7 +9,7 @@ type Stream struct {
 	Provider      string
 	Referer       string // Required for some providers
 	Subtitles     []Subtitle
-	NeedsReferrer bool   // True if stream requires Referer header to play
+	NeedsReferrer bool // True if stream requires Referer header to play
 }
 
 // Subtitle represents a subtitle track associated with a stream.
