@@ -248,13 +248,22 @@ func (m *SearchModel) Init() tea.Cmd {
 	// Ask the terminal about its capabilities; the answer is recorded by
 	// HandlePrimaryDeviceAttributes. A terminal that does not answer
 	// simply keeps the renderers the environment already proves.
-	//
-	// The loading spinner ticks from the start: the screens show it while
-	// a request runs, and a chain that only starts when a request begins
-	// would leave the first frames frozen. Duplicate Tick commands are
-	// harmless - the spinner rejects messages carrying a stale tag, so
-	// only one chain survives.
-	return tea.Batch(tea.Raw(ansi.RequestPrimaryDeviceAttributes), m.loading.Tick)
+	return tea.Raw(ansi.RequestPrimaryDeviceAttributes)
+}
+
+// loadingActive reports whether any screen the loading spinner represents
+// is currently in flight. When none is, the spinner's tick chain is left
+// to die so an idle UI is not re-rendered several times a second for a
+// hidden frame; the chain is re-seeded whenever a load starts.
+func (m *SearchModel) loadingActive() bool {
+	if m.searchState.Loading || m.searchState.MetadataLoading {
+		return true
+	}
+	if m.episodeState.Loading || m.episodeState.MetadataLoading || m.episodeState.Playing {
+		return true
+	}
+	s := m.settingsState.UpdateStatus
+	return s == "checking" || s == "updating"
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -307,7 +316,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.loading, cmd = m.loading.Update(msg)
-		cmds = append(cmds, cmd)
+		// Advance the chain only while a load is in flight: an idle UI
+		// would otherwise repaint for a spinner nobody sees.
+		if m.loadingActive() {
+			cmds = append(cmds, cmd)
+		}
 
 	case progressTickMsg:
 		// Smoothly animate towards target
@@ -385,7 +398,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.progressPercent = 0
 					m.progressTarget = 0.3
 					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
+					cmds = append(cmds, m.doSearch(query), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -463,11 +476,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.settingsState.UpdateStatus == "" || m.settingsState.UpdateStatus == "error" {
 						m.settingsState.UpdateStatus = "checking"
 						m.settingsState.UpdateError = nil
-						return m, checkForUpdateCmd()
+						return m, tea.Batch(checkForUpdateCmd(), m.loading.Tick)
 					} else if m.settingsState.UpdateStatus == "available" {
 						m.settingsState.UpdateStatus = "updating"
 						m.settingsState.UpdateError = nil
-						return m, doSelfUpdateCmd(m.settingsState.UpdateVersion)
+						return m, tea.Batch(doSelfUpdateCmd(m.settingsState.UpdateVersion), m.loading.Tick)
 					}
 				}
 			case "esc":
@@ -645,7 +658,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.progressTarget = 0.4
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
-					cmds = append(cmds, m.fetchEpisodes(selectedAnime))
+					cmds = append(cmds, m.fetchEpisodes(selectedAnime), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -654,7 +667,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Loading = true
 				m.progressPercent = 0
 				m.progressTarget = 0.3
-				cmds = append(cmds, m.doSearch(m.lastQuery))
+				cmds = append(cmds, m.doSearch(m.lastQuery), m.loading.Tick)
 				cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 					return progressTickMsg{}
 				}))
@@ -670,7 +683,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.searchState.Err = nil
 					m.progressPercent = 0
 					m.progressTarget = 0.3
-					cmds = append(cmds, m.doSearch(m.lastQuery))
+					cmds = append(cmds, m.doSearch(m.lastQuery), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -683,7 +696,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.episodeState.Err = nil
 						m.progressPercent = 0
 						m.progressTarget = 0.4
-						cmds = append(cmds, m.fetchEpisodes(selectedAnime))
+						cmds = append(cmds, m.fetchEpisodes(selectedAnime), m.loading.Tick)
 						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 							return progressTickMsg{}
 						}))
@@ -721,7 +734,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.episodeState.Playing = true
 					m.progressPercent = 0
 					m.progressTarget = 0.5
-					cmds = append(cmds, m.playEpisode(selectedAnime, selectedEpisode))
+					cmds = append(cmds, m.playEpisode(selectedAnime, selectedEpisode), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -775,7 +788,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					// Not cached (AniList batch may not have covered this one) — fetch individually
 					m.searchState.MetadataLoading = true
-					cmds = append(cmds, m.fetchMetadata())
+					cmds = append(cmds, m.fetchMetadata(), m.loading.Tick)
 				}
 			}
 		} else if m.state == searchState && !m.textInput.Focused() && len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 {
@@ -990,7 +1003,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg.Episodes) > 0 {
 			m.episodeState.MetadataLoading = true
-			cmds = append(cmds, m.fetchEpisodeMetadata())
+			cmds = append(cmds, m.fetchEpisodeMetadata(), m.loading.Tick)
 		}
 
 	case EpisodeTitlesLoadedMsg:
@@ -1005,7 +1018,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case episodeMetadataDebounceMsg:
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.MetadataLoading = true
-			cmds = append(cmds, m.fetchEpisodeMetadata())
+			cmds = append(cmds, m.fetchEpisodeMetadata(), m.loading.Tick)
 		}
 
 	case EpisodeMetadataFetchTriggered:
@@ -1363,6 +1376,7 @@ func (m *SearchModel) selectRecentSearch(index int) (tea.Model, tea.Cmd) {
 	m.textInput.Blur()
 	return m, tea.Batch(
 		m.doSearch(query),
+		m.loading.Tick,
 		tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 			return progressTickMsg{}
 		}),

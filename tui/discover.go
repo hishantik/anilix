@@ -113,7 +113,7 @@ func (m *SearchModel) openSelectedAnime() tea.Cmd {
 	if _, known := m.metadataCache[m.searchState.Selected]; !known {
 		// The metadata of this entry is not known yet.
 		m.searchState.MetadataLoading = true
-		return tea.Batch(m.clearCoverCmd(), m.fetchMetadata(), m.coverCmd(), m.trackingStatusCmd())
+		return tea.Batch(m.clearCoverCmd(), m.fetchMetadata(), m.coverCmd(), m.trackingStatusCmd(), m.loading.Tick)
 	}
 
 	return tea.Batch(m.clearCoverCmd(), m.coverCmd(), m.trackingStatusCmd())
@@ -140,6 +140,7 @@ func (m *SearchModel) openEpisodes() tea.Cmd {
 		tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
 			return progressTickMsg{}
 		}),
+		m.loading.Tick,
 		m.coverCmd(),
 	)
 }

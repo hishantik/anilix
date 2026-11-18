@@ -145,7 +145,7 @@ func (m *SearchModel) handleWatchlistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.progressTarget = 0.3
 		m.textInput.Blur()
 		m.state = searchState
-		return m, m.doSearch(entry.Title)
+		return m, tea.Batch(m.doSearch(entry.Title), m.loading.Tick)
 	}
 
 	return m, nil

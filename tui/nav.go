@@ -422,6 +422,7 @@ func (m *SearchModel) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
 				return progressTickMsg{}
 			}),
+			m.loading.Tick,
 		)
 	}
 
@@ -522,6 +523,7 @@ func (m *SearchModel) gotoEpisodes() tea.Cmd {
 		tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
 			return progressTickMsg{}
 		}),
+		m.loading.Tick,
 	)
 }
 
