@@ -397,7 +397,7 @@ do_install() {
         info "Latest version: ${C_BOLD}${version}${C_RESET}"
     fi
 
-    printf "\n  %bFetching%b %s%b for %b%s%b/%b%s%b...\n\n" \
+    printf "\n  %b◆%b Fetching %b%s%b for %b%s%b/%b%s%b...\n\n" \
         "$C_PRIMARY" "$C_RESET" \
         "$C_BOLD" "$version" "$C_RESET" \
         "$C_PRIMARY" "$os" "$C_RESET" \
