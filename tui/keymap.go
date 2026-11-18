@@ -58,12 +58,12 @@ func newKeymap() keymap {
 			key.WithHelp("ctrl+g", "design system"),
 		),
 		Menu: key.NewBinding(
-			key.WithKeys("m", "M"),
-			key.WithHelp("m", "menu"),
+			key.WithKeys("ctrl+m"),
+			key.WithHelp("ctrl+m", "menu"),
 		),
 		MenuAlt: key.NewBinding(
-			key.WithKeys("ctrl+o"),
-			key.WithHelp("ctrl+o", "menu"),
+			key.WithKeys("m", "M"),
+			key.WithHelp("m", "menu"),
 		),
 		ConfirmYes: key.NewBinding(
 			key.WithKeys("y", "enter"),
