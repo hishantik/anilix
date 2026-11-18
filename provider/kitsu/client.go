@@ -118,7 +118,7 @@ type Anime struct {
 }
 
 // TitleMatch is the result of resolving one search title to a Kitsu entry.
-// Anime is nil when no entry matched the title exactly.
+// Anime is nil when no entry matched the title.
 type TitleMatch struct {
 	Query string
 	Anime *Anime
@@ -153,9 +153,15 @@ func (c *Client) ResolveByTitles(ctx context.Context, titles []string) ([]TitleM
 	return matches, nil
 }
 
-// SearchFirst searches Kitsu for the title and returns the first entry
-// whose title matches exactly, with the AniList and MAL ids from the
-// sideloaded mappings. It returns nil when nothing matches.
+// SearchFirst searches Kitsu for the title and returns the entry that
+// matches it, with the AniList and MAL ids from the sideloaded mappings. It
+// returns nil when nothing matches.
+//
+// An exact match wins. When the query is a shortened form of a title, its
+// words are still a subset of exactly one candidate's words: hianime lists
+// "Demon Slayer: Entertainment District Arc" where Kitsu's title is
+// "Demon Slayer: Kimetsu no Yaiba - Entertainment District Arc". That unique
+// subset match is accepted; an ambiguous query attaches nothing.
 func (c *Client) SearchFirst(ctx context.Context, title string) (*Anime, error) {
 	resp, err := c.search(ctx, title, 20)
 	if err != nil {
@@ -171,7 +177,99 @@ func (c *Client) SearchFirst(ctx context.Context, title string) (*Anime, error) 
 			return a, nil
 		}
 	}
-	return nil, nil
+	return matchUniqueTitleSubset(resp.Animes, title), nil
+}
+
+// matchUniqueTitleSubset returns the only entry whose title contains every
+// word of the query. It only runs after exact matching failed, and only for
+// queries of at least three words.
+//
+// Uniqueness is what keeps the fallback safe: when two candidates contain
+// the query ("Infinity Castle" is in both Infinity Castle films), the query
+// does not identify one entry and nothing is attached.
+func matchUniqueTitleSubset(animes []*Anime, title string) *Anime {
+	want := titleTokens(title)
+	if len(want) < 3 {
+		return nil
+	}
+	var found *Anime
+	for _, a := range animes {
+		if !a.containsTitleTokens(want) {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = a
+	}
+	return found
+}
+
+// containsTitleTokens reports whether some title form of the entry contains
+// every wanted token.
+func (a *Anime) containsTitleTokens(want []string) bool {
+	for _, form := range a.titleForms() {
+		if form != "" && tokensContainAll(titleTokens(form), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokensContainAll reports whether have contains every token of want,
+// counting duplicates: two "movie" tokens in want need two in have.
+func tokensContainAll(have, want []string) bool {
+	counts := make(map[string]int, len(have))
+	for _, t := range have {
+		counts[t]++
+	}
+	for _, t := range want {
+		if counts[t] == 0 {
+			return false
+		}
+		counts[t]--
+	}
+	return true
+}
+
+// titleTokens splits a title into lowercase word tokens. Apostrophes join
+// their neighbours ("Sibling's" is one word) while other punctuation and
+// spaces separate words. Standalone roman numerals become digits so
+// "Infinity Castle II" and "Infinity Castle Part 2" compare equal.
+func titleTokens(s string) []string {
+	var tokens []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tok := b.String()
+		b.Reset()
+		if d, ok := romanNumeralDigits[tok]; ok {
+			tok = d
+		}
+		tokens = append(tokens, tok)
+	}
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case r == '\'' || r == '\u2019' || r == '`':
+			// Join the word parts instead of splitting the word.
+		default:
+			flush()
+		}
+	}
+	flush()
+	return tokens
+}
+
+// romanNumeralDigits maps the multi-letter roman numerals that appear in
+// titles onto decimal digits. A lone "i" is left alone: it is far more
+// often the English pronoun than the number one.
+var romanNumeralDigits = map[string]string{
+	"ii": "2", "iii": "3", "iv": "4", "v": "5",
+	"vi": "6", "vii": "7", "viii": "8", "ix": "9",
 }
 
 // matchesTitle reports whether the entry is the queried title.

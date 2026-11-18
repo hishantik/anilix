@@ -165,10 +165,14 @@ func hianimeSearchResults(hianimeProvider *hianime.Provider, query string) ([]*s
 //   - results with only a MAL id (movies and OVAs AniList did not match by
 //     title) come from Jikan, one call each;
 //   - results no id API knows fall back to the Kitsu entry resolved for the
-//     title, when there is one.
+//     title, when there is one;
+//   - results no metadata source knows (announced films, unaired specials)
+//     get a placeholder from the hianime search result itself, so the poster
+//     and type still show.
 //
 // Results already present in the metadata cache are skipped, so a rerun
-// after Kitsu IDs arrive only fetches what is still missing.
+// after Kitsu IDs arrive only fetches what is still missing. A placeholder
+// panel does not count as present: a real panel upgrades it.
 func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 	type indexID struct {
 		Index int
@@ -177,7 +181,7 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 	var anilistPairs []indexID
 	var malPairs []indexID
 	for i, r := range results {
-		if _, ok := m.metadataCache[i]; ok {
+		if m.hasRealMetadata(i) {
 			continue
 		}
 		if r.AniListID > 0 {
@@ -192,13 +196,26 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 	// the fetch runs in the background.
 	kitsuFallback := make(map[int]*kitsu.Anime)
 	for i, a := range m.kitsuAnimeCache {
-		if _, ok := m.metadataCache[i]; ok {
+		if m.hasRealMetadata(i) {
 			continue
 		}
 		kitsuFallback[i] = a
 	}
 
-	if len(anilistPairs) == 0 && len(malPairs) == 0 && len(kitsuFallback) == 0 {
+	// The provider's own search result is the last resort. The panels are
+	// built here, on the UI thread, so the background closure only reads
+	// immutable copies.
+	sourceFallback := make(map[int]*MetadataPanel)
+	for i, r := range results {
+		if m.hasRealMetadata(i) {
+			continue
+		}
+		if panel := searchResultPanel(r); panel != nil {
+			sourceFallback[i] = panel
+		}
+	}
+
+	if len(anilistPairs) == 0 && len(malPairs) == 0 && len(kitsuFallback) == 0 && len(sourceFallback) == 0 {
 		return func() tea.Msg {
 			return MetadataBatchLoadedMsg{MetadataMap: make(map[int]*MetadataPanel)}
 		}
@@ -250,15 +267,32 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 			}
 		}
 
+		// Nothing metadata-side knows the entry: show the provider's own
+		// poster and type rather than an empty panel.
+		for i, panel := range sourceFallback {
+			if _, ok := resultMap[i]; ok {
+				continue
+			}
+			resultMap[i] = panel
+		}
+
 		return MetadataBatchLoadedMsg{MetadataMap: resultMap}
 	}
 }
 
-// hasUncachedResults reports whether some result still lacks metadata and
-// may get it: an id API knows the entry, or Kitsu resolved it.
+// hasRealMetadata reports whether the result has metadata from a source
+// richer than the hianime placeholder. The placeholder is provisional: the
+// next pass may upgrade it.
+func (m *SearchModel) hasRealMetadata(idx int) bool {
+	meta, ok := m.metadataCache[idx]
+	return ok && meta != nil && meta.Source != "Hianime"
+}
+
+// hasUncachedResults reports whether some result still lacks real metadata
+// and may get it: an id API knows the entry, or Kitsu resolved it.
 func (m *SearchModel) hasUncachedResults() bool {
 	for i := range m.searchState.Results {
-		if _, ok := m.metadataCache[i]; ok {
+		if m.hasRealMetadata(i) {
 			continue
 		}
 		if _, ok := m.kitsuAnimeCache[i]; ok {
@@ -270,6 +304,35 @@ func (m *SearchModel) hasUncachedResults() bool {
 		}
 	}
 	return false
+}
+
+// searchResultPanel builds the placeholder panel from a hianime search
+// result. It covers entries no metadata API lists yet (announced films,
+// unaired specials): the provider still knows the title, poster and format,
+// and the Source marks the panel as provisional.
+func searchResultPanel(r *source.Anime) *MetadataPanel {
+	if r == nil || (r.Name == "" && r.Cover == "") {
+		return nil
+	}
+	return &MetadataPanel{
+		Title:    r.Name,
+		Cover:    r.Cover,
+		Type:     cleanFormat(r.Type),
+		Year:     r.Year,
+		Episodes: r.EpisodeCount,
+		Genres:   r.Genres,
+		Score:    r.Score,
+		Source:   "Hianime",
+	}
+}
+
+// cleanFormat strips the episode note hianime appends to some card types
+// ("MOVIE (1 EPS)") and keeps the format word.
+func cleanFormat(t string) string {
+	if i := strings.Index(t, " ("); i >= 0 {
+		t = t[:i]
+	}
+	return strings.TrimSpace(strings.ToUpper(t))
 }
 
 // kitsuToPanel builds a metadata panel from a Kitsu entry. Kitsu is the
@@ -403,6 +466,10 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	// list under the searched title still get their cover and synopsis.
 	kitsuAnime := m.kitsuAnimeCache[idx]
 
+	// The provider's own search data is the last resort, for entries no
+	// metadata API knows at all.
+	fallback := searchResultPanel(anime)
+
 	// Prefer AniList (faster GraphQL API) — only fall back to Jikan if no AniList ID
 	if anime.AniListID > 0 {
 		anilistID := anime.AniListID
@@ -415,7 +482,7 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 				if kitsuAnime != nil {
 					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
 				}
-				return MetadataLoadedMsg{Metadata: nil, Index: idx}
+				return MetadataLoadedMsg{Metadata: fallback, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(nil, data), Index: idx}
 		}
@@ -432,7 +499,7 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 				if kitsuAnime != nil {
 					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
 				}
-				return MetadataLoadedMsg{Metadata: nil, Index: idx}
+				return MetadataLoadedMsg{Metadata: fallback, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(data, nil), Index: idx}
 		}
@@ -446,7 +513,7 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		return MetadataLoadedMsg{Metadata: nil, Index: idx}
+		return MetadataLoadedMsg{Metadata: fallback, Index: idx}
 	}
 }
 

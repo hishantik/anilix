@@ -438,3 +438,160 @@ func TestGenreParsing(t *testing.T) {
 		t.Errorf("Genres = %v, want [Adventure Drama]", anime.Genres)
 	}
 }
+
+// serveSearch starts a Kitsu stub that returns body for any search.
+func serveSearch(t *testing.T, body string) *Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.api+json")
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return NewClientWithBaseURL(server.URL + "/")
+}
+
+func TestSearchFirst_shortenedTitle(t *testing.T) {
+	// hianime drops the franchise words; Kitsu's titles keep them. The
+	// query words are a subset of exactly one candidate, so it matches.
+	const body = `{
+  "data": [
+    {
+      "id": "1",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba"},
+        "showType": "TV",
+        "status": "finished"
+      }
+    },
+    {
+      "id": "2",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba: Yuukaku-hen",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba - Entertainment District Arc"},
+        "showType": "TV",
+        "status": "finished"
+      }
+    }
+  ],
+  "included": [],
+  "meta": {"count": 2}
+}`
+
+	client := serveSearch(t, body)
+	anime, err := client.SearchFirst(context.Background(), "Demon Slayer: Entertainment District Arc")
+	if err != nil {
+		t.Fatalf("SearchFirst() error = %v", err)
+	}
+	if anime == nil || anime.KitsuID != "2" {
+		t.Fatalf("SearchFirst() = %+v, want the Entertainment District Arc (id 2)", anime)
+	}
+}
+
+func TestSearchFirst_ambiguousSubset(t *testing.T) {
+	// Both films contain the query, so it does not identify one entry: a
+	// part-less query must attach neither.
+	const body = `{
+  "data": [
+    {
+      "id": "1",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba: Mugenjou-hen Movie 1",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba - Infinity Castle - Part 1: Akaza Returns"},
+        "showType": "movie",
+        "status": "finished"
+      }
+    },
+    {
+      "id": "2",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba: Mugenjou-hen Movie 2",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba Infinity Castle Part 2"},
+        "showType": "movie",
+        "status": "upcoming"
+      }
+    }
+  ],
+  "included": [],
+  "meta": {"count": 2}
+}`
+
+	client := serveSearch(t, body)
+	anime, err := client.SearchFirst(context.Background(), "Demon Slayer: Kimetsu no Yaiba Infinity Castle")
+	if err != nil {
+		t.Fatalf("SearchFirst() error = %v", err)
+	}
+	if anime != nil {
+		t.Errorf("SearchFirst() = %q, want nil (ambiguous)", anime.Canonical)
+	}
+}
+
+func TestSearchFirst_romanNumeralSubset(t *testing.T) {
+	// "II" must find "Part 2" and not "Part 1".
+	const body = `{
+  "data": [
+    {
+      "id": "1",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba: Mugenjou-hen Movie 1",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba - Infinity Castle - Part 1: Akaza Returns"},
+        "showType": "movie",
+        "status": "finished"
+      }
+    },
+    {
+      "id": "2",
+      "type": "anime",
+      "attributes": {
+        "canonicalTitle": "Kimetsu no Yaiba: Mugenjou-hen Movie 2",
+        "titles": {"en": "Demon Slayer: Kimetsu no Yaiba Infinity Castle Part 2"},
+        "showType": "movie",
+        "status": "upcoming"
+      }
+    }
+  ],
+  "included": [],
+  "meta": {"count": 2}
+}`
+
+	client := serveSearch(t, body)
+	anime, err := client.SearchFirst(context.Background(), "Demon Slayer: Kimetsu no Yaiba Infinity Castle II")
+	if err != nil {
+		t.Fatalf("SearchFirst() error = %v", err)
+	}
+	if anime == nil || anime.KitsuID != "2" {
+		t.Fatalf("SearchFirst() = %+v, want the second film (id 2)", anime)
+	}
+}
+
+func TestTitleTokens(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"Sibling's Bond", []string{"siblings", "bond"}},
+		{"Sibling`s Bond", []string{"siblings", "bond"}},
+		{"Demon Slayer: Kimetsu no Yaiba", []string{"demon", "slayer", "kimetsu", "no", "yaiba"}},
+		{"Infinity Castle II", []string{"infinity", "castle", "2"}},
+		{"Infinity Castle Part 2", []string{"infinity", "castle", "part", "2"}},
+		{"  --  ", nil},
+	}
+	for _, c := range cases {
+		got := titleTokens(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("titleTokens(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("titleTokens(%q) = %v, want %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}

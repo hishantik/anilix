@@ -295,17 +295,24 @@ func (c *Client) resolveTitleChunk(ctx context.Context, titles []string) ([]Titl
 		if !ok {
 			continue
 		}
+		var candidates []*MediaData
 		for _, entry := range media {
 			dataBytes, _ := json.Marshal(entry)
 			var m MediaData
 			if err := json.Unmarshal(dataBytes, &m); err != nil || m.ID == 0 {
 				continue
 			}
-			if titleMatches(t, &m) {
-				copied := m
-				matches[i].Media = &copied
+			copied := m
+			candidates = append(candidates, &copied)
+		}
+		for _, m := range candidates {
+			if titleMatches(t, m) {
+				matches[i].Media = m
 				break
 			}
+		}
+		if matches[i].Media == nil {
+			matches[i].Media = matchUniqueMediaSubset(candidates, t)
 		}
 	}
 	return matches, nil
@@ -330,6 +337,112 @@ func titleMatches(query string, media *MediaData) bool {
 		}
 	}
 	return false
+}
+
+// matchUniqueMediaSubset returns the only candidate whose title contains
+// every word of the query. It only runs after exact matching failed, and
+// only for queries of at least three words.
+//
+// AniList's title search ranks usable candidates even when hianime's title
+// is a shortened form ("Demon Slayer: Entertainment District Arc" against
+// "Demon Slayer: Kimetsu no Yaiba Entertainment District Arc"). Uniqueness
+// is what keeps the fallback safe: when two candidates contain the query,
+// the query does not identify one entry and nothing is attached.
+func matchUniqueMediaSubset(candidates []*MediaData, title string) *MediaData {
+	want := titleTokens(title)
+	if len(want) < 3 {
+		return nil
+	}
+	var found *MediaData
+	for _, m := range candidates {
+		if !mediaContainsTitleTokens(m, want) {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = m
+	}
+	return found
+}
+
+// mediaTitleForms lists the title strings of the entry that a query may
+// match.
+func mediaTitleForms(media *MediaData) []string {
+	forms := make([]string, 0, 3+len(media.Synonyms))
+	for _, t := range []string{media.Title.English, media.Title.Romaji, media.Title.Native} {
+		if t != "" {
+			forms = append(forms, t)
+		}
+	}
+	return append(forms, media.Synonyms...)
+}
+
+// mediaContainsTitleTokens reports whether some title form of the entry
+// contains every wanted token.
+func mediaContainsTitleTokens(media *MediaData, want []string) bool {
+	for _, form := range mediaTitleForms(media) {
+		if form != "" && tokensContainAll(titleTokens(form), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokensContainAll reports whether have contains every token of want,
+// counting duplicates: two "movie" tokens in want need two in have.
+func tokensContainAll(have, want []string) bool {
+	counts := make(map[string]int, len(have))
+	for _, t := range have {
+		counts[t]++
+	}
+	for _, t := range want {
+		if counts[t] == 0 {
+			return false
+		}
+		counts[t]--
+	}
+	return true
+}
+
+// titleTokens splits a title into lowercase word tokens. Apostrophes join
+// their neighbours ("Sibling's" is one word) while other punctuation and
+// spaces separate words. Standalone roman numerals become digits so
+// "Infinity Castle II" and "Infinity Castle Part 2" compare equal.
+func titleTokens(s string) []string {
+	var tokens []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tok := b.String()
+		b.Reset()
+		if d, ok := romanNumeralDigits[tok]; ok {
+			tok = d
+		}
+		tokens = append(tokens, tok)
+	}
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case r == '\'' || r == '\u2019' || r == '`':
+			// Join the word parts instead of splitting the word.
+		default:
+			flush()
+		}
+	}
+	flush()
+	return tokens
+}
+
+// romanNumeralDigits maps the multi-letter roman numerals that appear in
+// titles onto decimal digits. A lone "i" is left alone: it is far more
+// often the English pronoun than the number one.
+var romanNumeralDigits = map[string]string{
+	"ii": "2", "iii": "3", "iv": "4", "v": "5",
+	"vi": "6", "vii": "7", "viii": "8", "ix": "9",
 }
 
 // normalizeTitle lowercases a title and keeps only letters and digits, so

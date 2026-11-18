@@ -899,10 +899,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MetadataBatchLoadedMsg:
 		// Cache all metadata from the batch result; an entry already in
-		// the cache was richer (AniList/Jikan) and is not downgraded by
-		// the Kitsu fallback that a rerun may carry.
+		// the cache was richer (AniList/Jikan/Kitsu) and is not downgraded
+		// by the Kitsu or hianime fallback that a rerun may carry. The
+		// hianime placeholder is provisional and is upgraded by any real
+		// source.
 		for idx, meta := range msg.MetadataMap {
-			if _, ok := m.metadataCache[idx]; ok {
+			if meta == nil {
+				continue
+			}
+			if m.hasRealMetadata(idx) {
 				continue
 			}
 			m.metadataCache[idx] = meta

@@ -129,3 +129,103 @@ func TestMovieMetadataLive(t *testing.T) {
 		t.Error("movie panel has no genres")
 	}
 }
+
+// TestSearchMetadataCompleteLive covers the shortened-title regression:
+// hianime lists "Demon Slayer: Entertainment District Arc" while Kitsu and
+// AniList carry the full "Demon Slayer: Kimetsu no Yaiba - ..." title. Every
+// search result must end up with a metadata panel; entries no metadata
+// source knows at all get the provider's own placeholder.
+func TestSearchMetadataCompleteLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network test in short mode")
+	}
+
+	p := hianime.NewProvider()
+	results, err := hianimeSearchResults(p, "demon slayer")
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+
+	ac := anilist.NewClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resolveAnimeIDs(ctx, ac, results)
+
+	kc := kitsu.NewClient()
+	titles := make([]string, 0, len(results))
+	for _, r := range results {
+		titles = append(titles, r.Name)
+	}
+	matches, err := kc.ResolveByTitles(ctx, titles)
+	if err != nil {
+		t.Fatalf("kitsu resolve failed: %v", err)
+	}
+
+	m := &SearchModel{
+		anilistClient:   ac,
+		jikanClient:     jikan.NewClient("https://api.jikan.moe/v4"),
+		metadataCache:   make(map[int]*MetadataPanel),
+		kitsuAnimeCache: make(map[int]*kitsu.Anime),
+	}
+	for i, match := range matches {
+		if match.Anime == nil || i >= len(results) {
+			continue
+		}
+		m.kitsuAnimeCache[i] = match.Anime
+		if results[i].AniListID == 0 {
+			results[i].AniListID = match.Anime.AniListID
+		}
+		if results[i].MALID == 0 {
+			results[i].MALID = match.Anime.MALID
+		}
+	}
+
+	msg, ok := m.fetchMetadataBatch(results)().(MetadataBatchLoadedMsg)
+	if !ok {
+		t.Fatal("fetchMetadataBatch returned an unexpected message")
+	}
+
+	real := 0
+	for i, r := range results {
+		panel := msg.MetadataMap[i]
+		if panel == nil {
+			t.Errorf("result %d (%q) got no metadata panel", i, r.Name)
+			continue
+		}
+		if panel.Title == "" {
+			t.Errorf("result %d (%q) panel has no title", i, r.Name)
+		}
+		if panel.Source != "Hianime" {
+			real++
+		}
+	}
+	t.Logf("%d/%d results with real metadata", real, len(results))
+
+	// The shortened titles are the regression: they must not be left to
+	// the provider placeholder while Kitsu knows the entry.
+	shortened := []string{
+		"Demon Slayer: Entertainment District Arc",
+		"Demon Slayer Movie: Mugen Train",
+		"Demon Slayer: Mt. Natagumo Arc",
+		"Demon Slayer: The Hashira Meeting Arc",
+		"Demon Slayer: Sibling's Bond",
+	}
+	for _, want := range shortened {
+		found := false
+		for i, r := range results {
+			if r.Name != want {
+				continue
+			}
+			found = true
+			if panel := msg.MetadataMap[i]; panel == nil || panel.Source == "Hianime" {
+				t.Errorf("%q fell back to the provider placeholder", want)
+			}
+		}
+		if !found {
+			t.Logf("hianime no longer returns %q", want)
+		}
+	}
+}
