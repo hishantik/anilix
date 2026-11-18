@@ -321,7 +321,7 @@ func (m *SearchModel) hintList() []string {
 		return []string{
 			ui.KeyHint("esc", "back"),
 			ui.KeyHint("enter", "play"),
-			ui.KeyHint("ctrl+t", "sub/dub"),
+			ui.KeyHint("tab", "sub/dub"),
 			ui.KeyHint("ctrl+c", "quit"),
 		}
 
@@ -345,7 +345,7 @@ func (m *SearchModel) hintList() []string {
 		}
 		if m.textInput.Focused() {
 			// The search field has the keyboard: "m" would be typed into
-			// it, so the menu is reached with the escape key first.
+			// it, so the menu is reached with ctrl+e.
 			return []string{
 				ui.KeyHint("enter", "search"),
 				ui.KeyHint("esc", "leave field"),
@@ -357,7 +357,7 @@ func (m *SearchModel) hintList() []string {
 			ui.KeyHint("↑↓/jk", "move"),
 			ui.KeyHint("enter", "open"),
 			ui.KeyHint("/", "search"),
-			ui.KeyHint("m", "menu"),
+			ui.KeyHint("ctrl+e", "menu"),
 			ui.KeyHint("ctrl+s", "settings"),
 			ui.KeyHint("ctrl+c", "quit"),
 		}

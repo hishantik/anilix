@@ -352,13 +352,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleNavKey(msg)
 		}
 
-		// The menu key. "m" is only a toggle when no text field holds the
-		// focus - inside the search box it is a letter - so the drawer
-		// stays reachable with ctrl+o.
-		if key.Matches(msg, m.keymap.MenuAlt) {
-			m.toggleDrawer()
-			return m, nil
-		}
+		// The menu key. The drawer is opened with ctrl+m.
 		if key.Matches(msg, m.keymap.Menu) && !m.textInput.Focused() {
 			m.toggleDrawer()
 			return m, nil
