@@ -64,7 +64,7 @@ func (m *SearchModel) enrichMALIDs(results []*source.Anime, query string) tea.Cm
 
 		resp, err := jikanClient.SearchAnime(ctx, query)
 		if err != nil {
-			log.Printf("[anilix] jikan MALID enrichment failed: %v\n", err)
+			// Non-fatal: MAL IDs are optional enrichment; silently skip.
 			return MALIDsResolvedMsg{IDs: nil}
 		}
 
