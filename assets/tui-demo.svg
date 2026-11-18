@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="880" height="470" viewBox="0 0 880 470" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Animated terminal showing the Anilix interface">
+  <defs>
+    <linearGradient id="titleBar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1c2333"/>
+      <stop offset="1" stop-color="#141a29"/>
+    </linearGradient>
+    <linearGradient id="hl" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="410" y2="0">
+      <stop offset="0" stop-color="#6366f1" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#6366f1" stop-opacity="0.12"/>
+      <animateTransform attributeName="gradientTransform" type="translate" values="0 0; 0 0" dur="1s" repeatCount="indefinite"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00d4ff"/>
+      <stop offset="0.5" stop-color="#d946ef"/>
+      <stop offset="1" stop-color="#f43f5e"/>
+    </linearGradient>
+    <linearGradient id="progressGrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="240" y2="0">
+      <stop offset="0" stop-color="#00d4ff"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <filter id="tGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- window -->
+  <rect x="1" y="1" width="878" height="468" rx="14" fill="#0b101d" stroke="#2a3450" stroke-width="2"/>
+  <rect x="1.5" y="1.5" width="877" height="34" rx="13" fill="url(#titleBar)"/>
+  <circle cx="26" cy="19" r="6" fill="#f43f5e"/>
+  <circle cx="46" cy="19" r="6" fill="#fbbf24"/>
+  <circle cx="66" cy="19" r="6" fill="#34d399"/>
+  <text x="440" y="24" text-anchor="middle" font-family="monospace" font-size="13" fill="#7c869e">anilix &#8212; search</text>
+
+  <!-- app bar -->
+  <rect x="18" y="48" width="844" height="30" rx="6" fill="#101728"/>
+  <text x="32" y="68" font-family="monospace" font-weight="bold" font-size="13" fill="#00d4ff">ANILIX</text>
+  <rect x="590" y="54" width="46" height="18" rx="9" fill="#6366f1" opacity="0.9"/>
+  <text x="613" y="67" text-anchor="middle" font-family="monospace" font-size="10" font-weight="bold" fill="#ffffff">SUB</text>
+  <text x="652" y="67" font-family="monospace" font-size="10" fill="#5b6478">DUB</text>
+
+  <!-- search field -->
+  <rect x="18" y="90" width="844" height="36" rx="8" fill="#0e1526" stroke="#6366f1" stroke-opacity="0.7" stroke-width="1.5"/>
+  <text x="34" y="113" font-family="monospace" font-size="14" fill="#9aa3b8">&#9656; steam</text>
+  <!-- blinking cursor -->
+  <rect x="106" y="99" width="8" height="18" fill="#00d4ff">
+    <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.5;0.5;1" dur="1.1s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- spinner -->
+  <g filter="url(#tGlow)">
+    <text x="34" y="158" font-family="monospace" font-size="15" fill="#d946ef">&#8226;&#160;&#160;&#8226;&#160;&#160;&#8226;
+      <animate attributeName="opacity" values="1;0.4;1" dur="0.9s" repeatCount="indefinite"/>
+    </text>
+  </g>
+  <text x="66" y="158" font-family="monospace" font-size="13" fill="#8b94ab">Searching&#8230;</text>
+  <rect x="160" y="146" width="240" height="4" rx="2" fill="#1a2135"/>
+  <rect x="160" y="146" height="4" rx="2" fill="url(#progressGrad)" width="72">
+    <animate attributeName="width" values="12;150;230;150;12" dur="3.5s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- results skeleton shimmering in -->
+  <g>
+    <rect x="18" y="180" width="410" height="58" rx="8" fill="#101728">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="34" y="194" width="120" height="12" rx="3" fill="#2a3450"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="0.3s" repeatCount="indefinite"/></rect>
+    <rect x="34" y="216" width="200" height="8" rx="3" fill="#1c2333"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="0.6s" repeatCount="indefinite"/></rect>
+
+    <rect x="452" y="180" width="410" height="58" rx="8" fill="#101728">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" begin="0.4s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="468" y="194" width="150" height="12" rx="3" fill="#2a3450"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="0.7s" repeatCount="indefinite"/></rect>
+    <rect x="468" y="216" width="180" height="8" rx="3" fill="#1c2333"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="1s" repeatCount="indefinite"/></rect>
+
+    <rect x="18" y="250" width="410" height="58" rx="8" fill="#101728">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" begin="0.8s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="34" y="264" width="140" height="12" rx="3" fill="#2a3450"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="1.1s" repeatCount="indefinite"/></rect>
+    <rect x="34" y="286" width="170" height="8" rx="3" fill="#1c2333"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="1.4s" repeatCount="indefinite"/></rect>
+
+    <rect x="452" y="250" width="410" height="58" rx="8" fill="#101728">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" begin="1.2s" repeatCount="indefinite"/>
+    </rect>
+    <rect x="468" y="264" width="110" height="12" rx="3" fill="#2a3450"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="1.5s" repeatCount="indefinite"/></rect>
+    <rect x="468" y="286" width="190" height="8" rx="3" fill="#1c2333"><animate attributeName="opacity" values="0.6;1;0.6" dur="2.4s" begin="1.8s" repeatCount="indefinite"/></rect>
+  </g>
+
+  <!-- selected row highlight pulsing -->
+  <rect x="14" y="320" width="418" height="58" rx="8" fill="#6366f1" opacity="0.16" stroke="#6366f1" stroke-opacity="0.5">
+    <animate attributeName="opacity" values="0.12;0.28;0.12" dur="2s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="34" y="334" width="160" height="12" rx="3" fill="#8b94ab"/>
+  <rect x="34" y="356" width="220" height="8" rx="3" fill="#2a3450"/>
+
+  <!-- preview panel -->
+  <rect x="452" y="320" width="410" height="112" rx="8" fill="#0e1526" stroke="#2a3450"/>
+  <rect x="468" y="336" width="80" height="80" rx="6" fill="#141c30" stroke="#2a3450"/>
+  <text x="508" y="380" text-anchor="middle" font-family="monospace" font-size="9" fill="#5b6478">COVER</text>
+  <rect x="564" y="340" width="180" height="12" rx="3" fill="#8b94ab"/>
+  <rect x="564" y="362" width="120" height="8" rx="3" fill="#2a3450"/>
+  <rect x="564" y="380" width="200" height="8" rx="3" fill="#2a3450"/>
+  <rect x="564" y="398" width="150" height="8" rx="3" fill="#2a3450"/>
+
+  <!-- spectrum: dancing volume bars -->
+  <g transform="translate(440 452)">
+    <rect x="0" y="0" width="6" rx="2" fill="#00d4ff"><animate attributeName="height" values="8;20;8" dur="0.8s" repeatCount="indefinite"/><animate attributeName="y" values="0;-12;0" dur="0.8s" repeatCount="indefinite"/></rect>
+    <rect x="12" y="-4" width="6" rx="2" fill="#38bdf8"><animate attributeName="height" values="16;6;16" dur="0.7s" repeatCount="indefinite"/><animate attributeName="y" values="-8;-2;-8" dur="0.7s" repeatCount="indefinite"/></rect>
+    <rect x="24" y="-6" width="6" rx="2" fill="#818cf8"><animate attributeName="height" values="6;18;6" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="-2;-14;-2" dur="0.9s" repeatCount="indefinite"/></rect>
+    <rect x="36" y="-4" width="6" rx="2" fill="#c084fc"><animate attributeName="height" values="14;8;14" dur="0.6s" repeatCount="indefinite"/><animate attributeName="y" values="-10;-4;-10" dur="0.6s" repeatCount="indefinite"/></rect>
+    <rect x="48" y="0" width="6" rx="2" fill="#e879f9"><animate attributeName="height" values="8;22;8" dur="0.75s" repeatCount="indefinite"/><animate attributeName="y" values="0;-18;0" dur="0.75s" repeatCount="indefinite"/></rect>
+  </g>
+
+  <!-- footer progress bar -->
+  <rect x="18" y="448" width="844" height="5" rx="2.5" fill="#1a2135"/>
+  <rect x="18" y="448" height="5" rx="2.5" fill="url(#bar)" width="300">
+    <animate attributeName="width" values="80;600;844;844;80" keyTimes="0;0.4;0.6;0.9;1" dur="6s" repeatCount="indefinite"/>
+  </rect>
+</svg>
