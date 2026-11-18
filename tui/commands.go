@@ -48,42 +48,41 @@ func (m *SearchModel) resolveIDs(results []*source.Anime) tea.Cmd {
 	}
 }
 
-// enrichMALIDs resolves MAL IDs for titles AniList does not list verbatim,
-// using Jikan. It runs in the background and never blocks the result list or
-// the metadata batch.
-func (m *SearchModel) enrichMALIDs(results []*source.Anime, query string) tea.Cmd {
-	jikanClient := m.jikanClient
+// resolveIDsViaKitsu resolves AniList and MAL IDs for search results using
+// Kitsu, whose single request carries both ids through the sideloaded
+// mappings. It runs in the background and never blocks the result list or
+// the metadata batch; the UI applies the ids only where AniList resolved
+// none, so this never races with the AniList resolution.
+func (m *SearchModel) resolveIDsViaKitsu(results []*source.Anime) tea.Cmd {
+	kitsuClient := m.kitsuClient
 
 	return func() tea.Msg {
-		if jikanClient == nil || jikanClient.IsDown() {
+		if kitsuClient == nil || len(results) == 0 {
 			return MALIDsResolvedMsg{IDs: nil}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		resp, err := jikanClient.SearchAnime(ctx, query)
+		titles := make([]string, 0, len(results))
+		for _, a := range results {
+			titles = append(titles, a.Name)
+		}
+
+		matches, err := kitsuClient.ResolveByTitles(ctx, titles)
 		if err != nil {
-			// Non-fatal: MAL IDs are optional enrichment; silently skip.
+			// Non-fatal: the ids are optional enrichment; silently skip.
 			return MALIDsResolvedMsg{IDs: nil}
 		}
 
-		norm := func(s string) string {
-			return strings.ToLower(strings.TrimSpace(s))
-		}
-		ids := make(map[int]int)
-		for i, a := range results {
-			// Every title is looked up; the UI applies these IDs only to
-			// results that still have none, so this never races with the
-			// AniList resolution writing to the same results.
-			for _, d := range resp.Data {
-				if d.MalID == 0 {
-					continue
-				}
-				if norm(d.Title) == norm(a.Name) || norm(d.TitleEnglish) == norm(a.Name) {
-					ids[i] = d.MalID
-					break
-				}
+		ids := make(map[int]ExternalIDs)
+		for i, match := range matches {
+			if match.Anime == nil || i >= len(results) {
+				continue
+			}
+			ids[i] = ExternalIDs{
+				AniListID: match.Anime.AniListID,
+				MALID:     match.Anime.MALID,
 			}
 		}
 		return MALIDsResolvedMsg{IDs: ids}

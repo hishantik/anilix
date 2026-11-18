@@ -12,6 +12,7 @@ import (
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/hianime"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
 	"github.com/hishantik/anilix/tui/theme"
 	"github.com/hishantik/anilix/update"
@@ -52,6 +53,7 @@ type SearchModel struct {
 
 	jikanClient     *jikan.JikanClient
 	anilistClient   *anilist.Client
+	kitsuClient     *kitsu.Client
 	hianimeProvider *hianime.Provider
 
 	prevState     tuiState
@@ -211,6 +213,7 @@ func NewSearchModel() *SearchModel {
 		episodeDelegate:      episodeDelegate,
 		jikanClient:          jikan.NewClient("https://api.jikan.moe/v4"),
 		anilistClient:        anilist.NewClient(),
+		kitsuClient:          kitsu.NewClient(),
 		hianimeProvider:      hianimeProvider,
 		lastQuery:            "",
 		metadataCache:        make(map[int]*MetadataPanel),
@@ -837,10 +840,12 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			saveRecentSearch(m.lastQuery)
 			m.recentSearches = loadRecentSearches()
 			// Resolve AniList/MAL IDs in the background, then batch-fetch the
-			// metadata for all results in a single API call. The Jikan
-			// fallback runs alongside and never delays the list.
+			// metadata for all results in a single API call. The Kitsu
+			// resolver runs alongside and fills AniList/MAL IDs Kitsu knows
+			// and AniList did not, enabling AniSkip even for titles AniList
+			// lists under a different name.
 			cmds = append(cmds, m.resolveIDs(msg.Results))
-			cmds = append(cmds, m.enrichMALIDs(msg.Results, m.lastQuery))
+			cmds = append(cmds, m.resolveIDsViaKitsu(msg.Results))
 		}
 		m.updateSearchList()
 
@@ -857,12 +862,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case MALIDsResolvedMsg:
-		// Apply the Jikan fallback IDs on the UI thread, but only where the
-		// AniList resolution did not already provide one.
-		for idx, malID := range msg.IDs {
+		// Apply the Kitsu IDs on the UI thread, but only where the
+		// AniList resolution did not already provide them. Kitsu returns
+		// both AniList and MAL ids, so both fields are patched.
+		for idx, ids := range msg.IDs {
 			if idx >= 0 && idx < len(m.searchState.Results) {
+				if m.searchState.Results[idx].AniListID == 0 {
+					m.searchState.Results[idx].AniListID = ids.AniListID
+				}
 				if m.searchState.Results[idx].MALID == 0 {
-					m.searchState.Results[idx].MALID = malID
+					m.searchState.Results[idx].MALID = ids.MALID
 				}
 			}
 		}

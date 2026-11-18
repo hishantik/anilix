@@ -16,10 +16,17 @@ type IDsResolvedMsg struct {
 	Results []*source.Anime
 }
 
-// MALIDsResolvedMsg carries MAL IDs resolved by the Jikan fallback, keyed by
-// result index.
+// MALIDsResolvedMsg carries the external IDs Kitsu resolved for search
+// results, keyed by result index. Kitsu returns both the AniList and the
+// MAL id of an entry in one request.
 type MALIDsResolvedMsg struct {
-	IDs map[int]int
+	IDs map[int]ExternalIDs
+}
+
+// ExternalIDs are the ids of one search result as Kitsu reports them.
+type ExternalIDs struct {
+	AniListID int
+	MALID     int
 }
 
 type SearchErrorMsg struct {
