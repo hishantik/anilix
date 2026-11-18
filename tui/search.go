@@ -290,10 +290,8 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// A click on a recent search row re-runs that query. The search
-		// field and the recent searches header take the first three
-		// content rows (after the app bar), so a click further down maps
-		// onto the list.
+		// A click on a recent search row re-runs that query. recentSearchAt
+		// maps the content row (the app bar is row 0) onto the list.
 		if msg, ok := msg.(tea.MouseClickMsg); ok {
 			if click := m.recentSearchAt(msg.Y - 1); click >= 0 && click < len(m.recentSearches) {
 				return m.selectRecentSearch(click)
@@ -1285,21 +1283,27 @@ func (m *SearchModel) pillSwitchClicked(x int) bool {
 // to an index into the recent searches, or -1 when the row does not hold a
 // recent search entry.
 //
-// The recent searches are on screen only on a fresh search screen: the
-// field, a blank line and the section header take the first three rows,
-// and the entries follow one per row.
+// The recent searches are on screen only on a fresh search screen. The
+// bordered search field takes three rows, then a blank line, the section
+// header and another blank line sit between it and the entries: the first
+// entry is content row 6, and the entries follow one per row.
 func (m *SearchModel) recentSearchAt(y int) int {
 	if m.state != searchState || m.textInput.Value() != "" ||
 		m.searchState.Loading || m.searchState.Err != nil ||
 		len(m.searchState.Results) > 0 || len(m.recentSearches) == 0 {
 		return -1
 	}
-	index := y - 3
+	index := y - recentSearchesTop
 	if index < 0 || index >= len(m.recentSearches) {
 		return -1
 	}
 	return index
 }
+
+// recentSearchesTop is the content-region row of the first recent search
+// entry: the three rows of the bordered field, a blank line, the section
+// header and the blank line under it.
+const recentSearchesTop = 6
 
 // selectRecentSearch starts a search for the recent query at the index,
 // exactly as the enter key does on the same screen.
