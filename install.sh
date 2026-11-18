@@ -333,34 +333,39 @@ check_deps() {
     fi
 
     if [ "$has_player" = false ]; then
-        warning "No supported video player found. Anilix needs one of: mpv, vlc, iina"
-        printf '\n'
-        printf '  %b┌─ Install Guide ───────────────────────────────────────┐%b\n' "$C_OUTLINE" "$C_RESET" >&2
-        printf '  %b│%b\n' "$C_OUTLINE" "$C_RESET" >&2
-
         case "$os" in
             termux)
-                printf '  %b│%b   %b pkg install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                # On Termux it's obvious - just run pkg install mpv
+                info "No player found. Run: ${C_PRIMARY}pkg install mpv${C_RESET}"
                 ;;
-            darwin)
-                printf '  %b│%b   %b brew install mpv%b      (recommended)\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                printf '  %b│%b   %b brew install --cask iina%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                ;;
-            windows)
-                printf '  %b│%b   %b winget install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                printf '  %b│%b   or download from: https://mpv.io/installation/\n' "$C_OUTLINE" "$C_RESET" >&2
-                ;;
-            linux|*)
-                command -v apt >/dev/null 2>&1 && printf '  %b│%b   %b sudo apt install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                command -v dnf >/dev/null 2>&1 && printf '  %b│%b   %b sudo dnf install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                command -v pacman >/dev/null 2>&1 && printf '  %b│%b   %b sudo pacman -S mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
-                command -v apk >/dev/null 2>&1 && printf '  %b│%b   %b sudo apk add mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+            *)
+                warning "No supported video player found. Anilix needs one of: mpv, vlc, iina"
+                printf '\n'
+                printf '  %b┌─ Install Guide ───────────────────────────────────────┐%b\n' "$C_OUTLINE" "$C_RESET" >&2
+                printf '  %b│%b\n' "$C_OUTLINE" "$C_RESET" >&2
+
+                case "$os" in
+                    darwin)
+                        printf '  %b│%b   %b brew install mpv%b      (recommended)\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        printf '  %b│%b   %b brew install --cask iina%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        ;;
+                    windows)
+                        printf '  %b│%b   %b winget install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        printf '  %b│%b   or download from: https://mpv.io/installation/\n' "$C_OUTLINE" "$C_RESET" >&2
+                        ;;
+                    *)
+                        command -v apt >/dev/null 2>&1 && printf '  %b│%b   %b sudo apt install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        command -v dnf >/dev/null 2>&1 && printf '  %b│%b   %b sudo dnf install mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        command -v pacman >/dev/null 2>&1 && printf '  %b│%b   %b sudo pacman -S mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        command -v apk >/dev/null 2>&1 && printf '  %b│%b   %b sudo apk add mpv%b\n' "$C_OUTLINE" "$C_RESET" "$C_PRIMARY" "$C_RESET" >&2
+                        ;;
+                esac
+
+                printf '  %b│%b\n' "$C_OUTLINE" "$C_RESET" >&2
+                printf '  %b└───────────────────────────────────────────────────────┘%b\n' "$C_OUTLINE" "$C_RESET" >&2
+                printf '\n'
                 ;;
         esac
-
-        printf '  %b│%b\n' "$C_OUTLINE" "$C_RESET" >&2
-        printf '  %b└───────────────────────────────────────────────────────┘%b\n' "$C_OUTLINE" "$C_RESET" >&2
-        printf '\n'
     else
         success "Found player: $player"
     fi
@@ -374,6 +379,11 @@ do_install() {
     arch=$(detect_arch)
     install_dir=$(detect_install_dir)
 
+    # Override os for Termux to show correct install instructions in check_deps
+    if is_termux; then
+        os="termux"
+    fi
+
     separator
     printf '\n'
 
@@ -384,7 +394,11 @@ do_install() {
         info "Latest version: ${C_BOLD}${version}${C_RESET}"
     fi
 
-    printf '\n  %b%b Fetching ${C_BOLD}%s${C_RESET}%b for ${C_PRIMARY}%s${C_RESET}/${C_TERTIARY}%s${C_RESET}...\n\n' "$C_PRIMARY" "$SPINNER_FRAMES" "$version" "$C_PRIMARY" "$os" "$arch"
+    printf "\n  %b%b Fetching %b%s%b for %b%s%b/%b%s%b...\n\n" \
+        "$C_PRIMARY" "$SPINNER_FRAMES" \
+        "$C_BOLD" "$version" "$C_RESET" \
+        "$C_PRIMARY" "$os" "$C_RESET" \
+        "$C_TERTIARY" "$arch" "$C_RESET"
 
     # Build download URL
     case "$os" in
@@ -409,7 +423,7 @@ do_install() {
 
     progress "Downloading..."
     printf '\n'
-    printf '  %b%b %s%b\n' "$C_MUTED" "$C_OUTLINE" "$url" "$C_RESET" >&2
+    printf "  %s\n" "$url" >&2
 
     if ! download_file "$url" "${TMPDIR}/${archive_name}"; then
         printf '\n'
