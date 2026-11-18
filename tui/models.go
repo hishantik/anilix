@@ -67,7 +67,7 @@ type MetadataPanel struct {
 	Popularity   int
 	Genres       []string
 	Synopsis     string
-	Source       string // "Jikan", "AniList", or "Jikan + AniList"
+	Source       string // "Jikan", "AniList", "Jikan + AniList", or "Kitsu"
 }
 
 // EpisodeState holds the state for episode selection

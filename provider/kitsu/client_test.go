@@ -248,6 +248,13 @@ func TestAnime_matchesTitle(t *testing.T) {
 	if !anime.matchesTitle(q2) {
 		t.Error("expected 'one piece!' to match 'One Piece'")
 	}
+
+	// An abbreviated title (Kitsu's synonym list) must match too, which is
+	// how alternate movie/OVA names resolve.
+	anime.Aliases = []string{"The Movie: Mugen Train"}
+	if !anime.matchesTitle(normalizeTitle("the movie mugen train")) {
+		t.Error("expected an abbreviated title to match")
+	}
 }
 
 func TestNormalizeTitle(t *testing.T) {
@@ -363,7 +370,7 @@ func TestMappingParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mappings := make(map[string]*MappingAttributes, len(payload.Included))
+	mappings := make(map[string]*IncludedAttributes, len(payload.Included))
 	for _, inc := range payload.Included {
 		if inc.Type == "mappings" && inc.Attributes != nil {
 			mappings[inc.ID] = inc.Attributes
@@ -385,5 +392,49 @@ func TestMappingParsing(t *testing.T) {
 	}
 	if anime.AniListID != 888 {
 		t.Errorf("AniListID = %d, want 888", anime.AniListID)
+	}
+}
+
+func TestGenreParsing(t *testing.T) {
+	// Genres are sideloaded alongside the mappings in the same response.
+	const body = `{
+  "data": [
+    {
+      "id": "176",
+      "type": "anime",
+      "attributes": {"canonicalTitle": "Spirited Away", "showType": "movie", "status": "finished"},
+      "relationships": {
+        "mappings": {"data": [{"type": "mappings", "id": "m1"}]},
+        "genres": {"data": [{"type": "genres", "id": "g1"}, {"type": "genres", "id": "g2"}]}
+      }
+    }
+  ],
+  "included": [
+    {"id": "m1", "type": "mappings", "attributes": {"externalSite": "anilist/anime", "externalId": "199"}},
+    {"id": "g1", "type": "genres", "attributes": {"name": "Adventure", "slug": "adventure"}},
+    {"id": "g2", "type": "genres", "attributes": {"name": "Drama", "slug": "drama"}}
+  ],
+  "meta": {"count": 1}
+}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.api+json")
+		w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL + "/")
+	anime, err := client.SearchFirst(context.Background(), "Spirited Away")
+	if err != nil {
+		t.Fatalf("SearchFirst() error = %v", err)
+	}
+	if anime == nil {
+		t.Fatal("SearchFirst() = nil, want entry")
+	}
+	if len(anime.Genres) != 2 {
+		t.Fatalf("Genres = %v, want [Adventure Drama]", anime.Genres)
+	}
+	if anime.Genres[0] != "Adventure" || anime.Genres[1] != "Drama" {
+		t.Errorf("Genres = %v, want [Adventure Drama]", anime.Genres)
 	}
 }

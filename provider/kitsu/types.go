@@ -4,11 +4,11 @@ package kitsu
 
 // AnimeResponse is the top-level response of an anime listing request. The
 // resource objects live in Data, and resources sideloaded with ?include=
-// (here the mappings) live in Included.
+// (the mappings and genres) live in Included.
 type AnimeResponse struct {
-	Data     []*AnimeResource `json:"data"`
-	Included []*MappingResource `json:"included,omitempty"`
-	Meta     AnimeMeta        `json:"meta,omitempty"`
+	Data     []*AnimeResource   `json:"data"`
+	Included []*IncludedResource `json:"included,omitempty"`
+	Meta     AnimeMeta          `json:"meta,omitempty"`
 }
 
 // AnimeMeta carries the count Kitsu reports for a filter query.
@@ -29,9 +29,10 @@ type AnimeResource struct {
 // AnimeAttributes are the anime fields the TUI shows or needs for ID
 // resolution.
 type AnimeAttributes struct {
-	CanonicalTitle string            `json:"canonicalTitle"`
-	Titles         map[string]string `json:"titles"`
-	Slug           string            `json:"slug"`
+	CanonicalTitle    string            `json:"canonicalTitle"`
+	Titles            map[string]string `json:"titles"`
+	AbbreviatedTitles []string          `json:"abbreviatedTitles"`
+	Slug              string            `json:"slug"`
 	Synopsis       string            `json:"synopsis"`
 	PosterImage    ImageLinks        `json:"posterImage"`
 	CoverImage     ImageLinks        `json:"coverImage"`
@@ -57,10 +58,11 @@ type ImageLinks struct {
 	Original string `json:"original"`
 }
 
-// AnimeRelationships lists the resource links of an anime; only mappings
-// matter here.
+// AnimeRelationships lists the resource links of an anime; only the
+// mappings and genres sideloaded with ?include= matter here.
 type AnimeRelationships struct {
 	Mappings *RelationshipList `json:"mappings"`
+	Genres   *RelationshipList `json:"genres"`
 }
 
 // RelationshipList is the JSON:API relationship object: a list of resource
@@ -87,4 +89,23 @@ type MappingResource struct {
 type MappingAttributes struct {
 	ExternalSite string `json:"externalSite"`
 	ExternalID   string `json:"externalId"`
+}
+
+// IncludedResource is one sideloaded resource. The same JSON:API envelope
+// carries mappings and genres, so the attributes hold the union of both
+// shapes; a given resource only fills the ones it owns.
+type IncludedResource struct {
+	ID         string              `json:"id"`
+	Type       string              `json:"type"`
+	Attributes *IncludedAttributes `json:"attributes"`
+}
+
+// IncludedAttributes is the union of the sideloaded resource attributes.
+type IncludedAttributes struct {
+	// Mappings
+	ExternalSite string `json:"externalSite"`
+	ExternalID   string `json:"externalId"`
+	// Genres
+	Name string `json:"name"`
+	Slug string `json:"slug"`
 }

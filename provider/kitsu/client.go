@@ -98,9 +98,11 @@ type Anime struct {
 	KitsuID       string
 	Canonical     string
 	Titles        map[string]string
+	Aliases       []string // abbreviatedTitles: Kitsu's synonym list
 	Synopsis      string
 	Poster        string
 	Cover         string
+	Genres        []string
 	EpisodeCount  int
 	EpisodeLength int
 	ShowType      string
@@ -186,11 +188,12 @@ func (a *Anime) matchesTitle(normalizedQuery string) bool {
 
 // titleForms lists the title strings of the entry that a query may match.
 func (a *Anime) titleForms() []string {
-	forms := make([]string, 0, len(a.Titles)+1)
+	forms := make([]string, 0, len(a.Titles)+len(a.Aliases)+1)
 	forms = append(forms, a.Canonical)
 	for _, t := range a.Titles {
 		forms = append(forms, t)
 	}
+	forms = append(forms, a.Aliases...)
 	return forms
 }
 
@@ -203,7 +206,7 @@ func (c *Client) search(ctx context.Context, text string, limit int) (*searchRes
 	values := url.Values{}
 	values.Set("filter[text]", text)
 	values.Set("page[limit]", fmt.Sprintf("%d", limit))
-	values.Set("include", "mappings")
+	values.Set("include", "mappings,genres")
 	u := fmt.Sprintf("%s/anime?%s", c.baseURL, values.Encode())
 
 	body, err := c.get(ctx, u)
@@ -216,13 +219,20 @@ func (c *Client) search(ctx context.Context, text string, limit int) (*searchRes
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// The mappings arrive as a flat "included" array; the anime
-	// relationships name the mapping ids each entry owns. Build the
-	// mapping lookup once and walk every anime.
-	mappings := make(map[string]*MappingAttributes, len(payload.Included))
+	// The mappings and genres arrive as flat "included" arrays; the anime
+	// relationships name the ids each entry owns. Build both lookups once
+	// and walk every anime.
+	mappings := make(map[string]*IncludedAttributes, len(payload.Included))
+	genres := make(map[string]string, len(payload.Included))
 	for _, inc := range payload.Included {
-		if inc.Type == "mappings" && inc.Attributes != nil {
+		if inc == nil || inc.Attributes == nil {
+			continue
+		}
+		switch inc.Type {
+		case "mappings":
 			mappings[inc.ID] = inc.Attributes
+		case "genres":
+			genres[inc.ID] = inc.Attributes.Name
 		}
 	}
 
@@ -236,6 +246,7 @@ func (c *Client) search(ctx context.Context, text string, limit int) (*searchRes
 		}
 		anime := flattenAnime(res)
 		applyMappings(anime, res, mappings)
+		applyGenres(anime, res, genres)
 		result.Animes = append(result.Animes, anime)
 	}
 	return result, nil
@@ -254,6 +265,7 @@ func flattenAnime(res *AnimeResource) *Anime {
 		KitsuID:   res.ID,
 		Canonical: attrs.CanonicalTitle,
 		Titles:    attrs.Titles,
+		Aliases:   attrs.AbbreviatedTitles,
 		Synopsis:  attrs.Synopsis,
 		ShowType:  attrs.ShowType,
 		Status:    attrs.Status,
@@ -276,7 +288,7 @@ func flattenAnime(res *AnimeResource) *Anime {
 
 // applyMappings reads the anime's mapping relationship and copies the
 // AniList and MAL ids from the sideloaded mappings.
-func applyMappings(anime *Anime, res *AnimeResource, mappings map[string]*MappingAttributes) {
+func applyMappings(anime *Anime, res *AnimeResource, mappings map[string]*IncludedAttributes) {
 	if res.Relationships == nil || res.Relationships.Mappings == nil {
 		return
 	}
@@ -290,6 +302,19 @@ func applyMappings(anime *Anime, res *AnimeResource, mappings map[string]*Mappin
 			anime.MALID = atoi(attrs.ExternalID)
 		case "anilist/anime":
 			anime.AniListID = atoi(attrs.ExternalID)
+		}
+	}
+}
+
+// applyGenres reads the anime's genre relationship and copies the genre
+// names from the sideloaded resources.
+func applyGenres(anime *Anime, res *AnimeResource, genres map[string]string) {
+	if res.Relationships == nil || res.Relationships.Genres == nil {
+		return
+	}
+	for _, ref := range res.Relationships.Genres.Data {
+		if name, ok := genres[ref.ID]; ok && name != "" {
+			anime.Genres = append(anime.Genres, name)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
 	"github.com/hishantik/anilix/update"
 
@@ -76,16 +77,18 @@ func (m *SearchModel) resolveIDsViaKitsu(results []*source.Anime) tea.Cmd {
 		}
 
 		ids := make(map[int]ExternalIDs)
+		animes := make(map[int]*kitsu.Anime)
 		for i, match := range matches {
 			if match.Anime == nil || i >= len(results) {
 				continue
 			}
+			animes[i] = match.Anime
 			ids[i] = ExternalIDs{
 				AniListID: match.Anime.AniListID,
 				MALID:     match.Anime.MALID,
 			}
 		}
-		return MALIDsResolvedMsg{IDs: ids}
+		return MALIDsResolvedMsg{IDs: ids, Animes: animes}
 	}
 }
 
@@ -154,48 +157,188 @@ func hianimeSearchResults(hianimeProvider *hianime.Provider, query string) ([]*s
 	return found, nil
 }
 
-// fetchMetadataBatch fetches metadata for all results in a single AniList GraphQL call.
+// fetchMetadataBatch fetches metadata for all results, from every source
+// that can serve them:
+//
+//   - results with an AniList id come from one batched AniList GraphQL call
+//     (the richest source: it has the genres);
+//   - results with only a MAL id (movies and OVAs AniList did not match by
+//     title) come from Jikan, one call each;
+//   - results no id API knows fall back to the Kitsu entry resolved for the
+//     title, when there is one.
+//
+// Results already present in the metadata cache are skipped, so a rerun
+// after Kitsu IDs arrive only fetches what is still missing.
 func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
-	// Collect all AniList IDs with their result index
 	type indexID struct {
-		Index     int
-		AniListID int
+		Index int
+		ID    int
 	}
-	var pairs []indexID
+	var anilistPairs []indexID
+	var malPairs []indexID
 	for i, r := range results {
+		if _, ok := m.metadataCache[i]; ok {
+			continue
+		}
 		if r.AniListID > 0 {
-			pairs = append(pairs, indexID{Index: i, AniListID: r.AniListID})
+			anilistPairs = append(anilistPairs, indexID{Index: i, ID: r.AniListID})
+		} else if r.MALID > 0 {
+			malPairs = append(malPairs, indexID{Index: i, ID: r.MALID})
 		}
 	}
 
-	if len(pairs) == 0 {
+	// Entries neither id API knows can still be shown from the Kitsu
+	// resolution. Snapshot the cache: it is owned by the UI thread, and
+	// the fetch runs in the background.
+	kitsuFallback := make(map[int]*kitsu.Anime)
+	for i, a := range m.kitsuAnimeCache {
+		if _, ok := m.metadataCache[i]; ok {
+			continue
+		}
+		kitsuFallback[i] = a
+	}
+
+	if len(anilistPairs) == 0 && len(malPairs) == 0 && len(kitsuFallback) == 0 {
 		return func() tea.Msg {
 			return MetadataBatchLoadedMsg{MetadataMap: make(map[int]*MetadataPanel)}
 		}
 	}
 
-	ids := make([]int, len(pairs))
-	for i, p := range pairs {
-		ids[i] = p.AniListID
+	ids := make([]int, len(anilistPairs))
+	for i, p := range anilistPairs {
+		ids[i] = p.ID
 	}
 
 	anilistClient := m.anilistClient
+	jikanClient := m.jikanClient
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+		resultMap := make(map[int]*MetadataPanel)
 
-		batch, err := anilistClient.GetAnimeBatch(ctx, ids)
-		if err != nil {
-			return MetadataBatchLoadedMsg{MetadataMap: make(map[int]*MetadataPanel)}
-		}
-
-		resultMap := make(map[int]*MetadataPanel, len(pairs))
-		for _, p := range pairs {
-			if media, ok := batch[p.AniListID]; ok {
-				resultMap[p.Index] = mergeMetadata(nil, media)
+		if len(anilistPairs) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			batch, err := anilistClient.GetAnimeBatch(ctx, ids)
+			cancel()
+			if err == nil {
+				for _, p := range anilistPairs {
+					if media, ok := batch[p.ID]; ok {
+						resultMap[p.Index] = mergeMetadata(nil, media)
+					}
+				}
 			}
 		}
+
+		// Jikan covers the MAL-id-only entries. It is rate limited to
+		// three requests a second, so the loop paces itself.
+		for _, p := range malPairs {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			data, err := jikanClient.GetAnime(ctx, p.ID)
+			cancel()
+			if err == nil && data != nil {
+				resultMap[p.Index] = mergeMetadata(data, nil)
+			}
+			time.Sleep(350 * time.Millisecond)
+		}
+
+		// Kitsu is the last resort for entries without usable ids. A nil
+		// panel is not cached, so a later rerun can still retry it.
+		for i, a := range kitsuFallback {
+			if _, ok := resultMap[i]; ok {
+				continue
+			}
+			if panel := kitsuToPanel(a); panel != nil {
+				resultMap[i] = panel
+			}
+		}
+
 		return MetadataBatchLoadedMsg{MetadataMap: resultMap}
+	}
+}
+
+// hasUncachedResults reports whether some result still lacks metadata and
+// may get it: an id API knows the entry, or Kitsu resolved it.
+func (m *SearchModel) hasUncachedResults() bool {
+	for i := range m.searchState.Results {
+		if _, ok := m.metadataCache[i]; ok {
+			continue
+		}
+		if _, ok := m.kitsuAnimeCache[i]; ok {
+			return true
+		}
+		r := m.searchState.Results[i]
+		if r.AniListID > 0 || r.MALID > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// kitsuToPanel builds a metadata panel from a Kitsu entry. Kitsu is the
+// fallback source: it carries the display fields AniList and Jikan carry,
+// including the genres, for entries those APIs do not know by id.
+func kitsuToPanel(a *kitsu.Anime) *MetadataPanel {
+	if a == nil {
+		return nil
+	}
+	panel := &MetadataPanel{
+		Title:        a.Canonical,
+		TitleEnglish: a.Titles["en"],
+		TitleNative:  a.Titles["ja_jp"],
+		Cover:        a.Poster,
+		Type:         kitsuFormat(a.ShowType),
+		Status:       kitsuStatus(a.Status),
+		Episodes:     a.EpisodeCount,
+		Score:        a.AverageRating / 10,
+		Genres:       a.Genres,
+		Synopsis:     a.Synopsis,
+		Source:       "Kitsu",
+	}
+	if len(a.StartDate) >= 4 {
+		if y, err := strconv.Atoi(a.StartDate[:4]); err == nil {
+			panel.Year = y
+		}
+	}
+	return panel
+}
+
+// kitsuFormat maps Kitsu's lowercase show type onto the format words the
+// panel shows ("TV", "MOVIE", "OVA", ...).
+func kitsuFormat(showType string) string {
+	switch strings.ToLower(showType) {
+	case "tv":
+		return "TV"
+	case "movie":
+		return "MOVIE"
+	case "ova":
+		return "OVA"
+	case "ona":
+		return "ONA"
+	case "special":
+		return "SPECIAL"
+	case "music":
+		return "MUSIC"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(showType)
+	}
+}
+
+// kitsuStatus maps Kitsu's release status onto the words AniList uses, so
+// the panel language does not change with the source.
+func kitsuStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "current":
+		return "RELEASING"
+	case "finished":
+		return "FINISHED"
+	case "tba":
+		return "TBA"
+	case "upcoming":
+		return "NOT_YET_RELEASED"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(status)
 	}
 }
 
@@ -255,6 +398,11 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	anime := m.searchState.Results[m.searchState.Selected]
 	idx := m.searchState.Selected
 
+	// The Kitsu entry, when the title resolution found one, is the
+	// fallback for every failure below: movies and OVAs AniList does not
+	// list under the searched title still get their cover and synopsis.
+	kitsuAnime := m.kitsuAnimeCache[idx]
+
 	// Prefer AniList (faster GraphQL API) — only fall back to Jikan if no AniList ID
 	if anime.AniListID > 0 {
 		anilistID := anime.AniListID
@@ -264,6 +412,9 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 			defer cancel()
 			data, err := anilistClient.GetAnime(ctx, anilistID)
 			if err != nil {
+				if kitsuAnime != nil {
+					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
+				}
 				return MetadataLoadedMsg{Metadata: nil, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(nil, data), Index: idx}
@@ -278,9 +429,19 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 			defer cancel()
 			data, err := jikanClient.GetAnime(ctx, malID)
 			if err != nil {
+				if kitsuAnime != nil {
+					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
+				}
 				return MetadataLoadedMsg{Metadata: nil, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(data, nil), Index: idx}
+		}
+	}
+
+	// No id API matched the title: the Kitsu entry is all there is.
+	if kitsuAnime != nil {
+		return func() tea.Msg {
+			return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
 		}
 	}
 

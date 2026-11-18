@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
 )
 
@@ -17,10 +18,11 @@ type IDsResolvedMsg struct {
 }
 
 // MALIDsResolvedMsg carries the external IDs Kitsu resolved for search
-// results, keyed by result index. Kitsu returns both the AniList and the
-// MAL id of an entry in one request.
+// results, keyed by result index, along with the Kitsu entries themselves
+// so the UI can build metadata when AniList knows nothing about an entry.
 type MALIDsResolvedMsg struct {
-	IDs map[int]ExternalIDs
+	IDs    map[int]ExternalIDs
+	Animes map[int]*kitsu.Anime
 }
 
 // ExternalIDs are the ids of one search result as Kitsu reports them.

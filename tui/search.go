@@ -87,6 +87,8 @@ type SearchModel struct {
 
 	prevSearchListIndex  int
 	metadataCache        map[int]*MetadataPanel
+	kitsuAnimeCache      map[int]*kitsu.Anime
+	metadataStale        bool
 	episodeTitlesCache   map[int][]string
 	episodeTitlesCacheMu sync.Mutex
 	episodeMetadataCache map[string]*jikan.Episode
@@ -217,6 +219,7 @@ func NewSearchModel() *SearchModel {
 		hianimeProvider:      hianimeProvider,
 		lastQuery:            "",
 		metadataCache:        make(map[int]*MetadataPanel),
+		kitsuAnimeCache:      make(map[int]*kitsu.Anime),
 		episodeTitlesCache:   make(map[int][]string),
 		episodeMetadataCache: make(map[string]*jikan.Episode),
 		recentSearches:       loadRecentSearches(),
@@ -820,6 +823,8 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeTitlesCache = make(map[int][]string)
 		m.episodeTitlesCacheMu.Unlock()
 		m.metadataCache = make(map[int]*MetadataPanel)
+		m.kitsuAnimeCache = make(map[int]*kitsu.Anime)
+		m.metadataStale = false
 		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
 		// A resume from the history steers the results back to the watched
@@ -864,24 +869,53 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MALIDsResolvedMsg:
 		// Apply the Kitsu IDs on the UI thread, but only where the
 		// AniList resolution did not already provide them. Kitsu returns
-		// both AniList and MAL ids, so both fields are patched.
+		// both AniList and MAL ids, so both fields are patched. The Kitsu
+		// entries are kept as the metadata fallback for movies and OVAs
+		// AniList does not know by id.
 		for idx, ids := range msg.IDs {
-			if idx >= 0 && idx < len(m.searchState.Results) {
-				if m.searchState.Results[idx].AniListID == 0 {
-					m.searchState.Results[idx].AniListID = ids.AniListID
-				}
-				if m.searchState.Results[idx].MALID == 0 {
-					m.searchState.Results[idx].MALID = ids.MALID
-				}
+			if idx < 0 || idx >= len(m.searchState.Results) {
+				continue
 			}
+			if m.searchState.Results[idx].AniListID == 0 {
+				m.searchState.Results[idx].AniListID = ids.AniListID
+			}
+			if m.searchState.Results[idx].MALID == 0 {
+				m.searchState.Results[idx].MALID = ids.MALID
+			}
+		}
+		for idx, anime := range msg.Animes {
+			m.kitsuAnimeCache[idx] = anime
+		}
+		// The first batch ran with whatever ids AniList resolved; the ids
+		// Kitsu just added may cover entries it skipped. Fetch those once
+		// the running batch is done, so the two passes never overlap.
+		if m.searchState.MetadataLoading {
+			m.metadataStale = true
+		} else if m.hasUncachedResults() {
+			// The pass runs quietly: the list fills in when it returns,
+			// no spinner is needed for the few entries it covers.
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
 		}
 
 	case MetadataBatchLoadedMsg:
-		// Cache all metadata from the batch result
+		// Cache all metadata from the batch result; an entry already in
+		// the cache was richer (AniList/Jikan) and is not downgraded by
+		// the Kitsu fallback that a rerun may carry.
 		for idx, meta := range msg.MetadataMap {
+			if _, ok := m.metadataCache[idx]; ok {
+				continue
+			}
 			m.metadataCache[idx] = meta
 		}
-		m.searchState.MetadataLoading = false
+		if m.metadataStale {
+			// Kitsu IDs arrived while this batch was running: the ids
+			// it added were not in the request. Run one more pass, which
+			// skips everything already cached.
+			m.metadataStale = false
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
+		} else {
+			m.searchState.MetadataLoading = false
+		}
 		m.progressTarget = 1.0
 		// The rows carry the alternative title and the status of their
 		// entry: the list is rebuilt with what the batch brought.
