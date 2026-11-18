@@ -36,6 +36,14 @@ type AppBar struct {
 
 // Render renders the app bar.
 func (a AppBar) Render() string {
+	out, _ := a.RenderWithLayout()
+	return out
+}
+
+// RenderWithLayout renders the app bar and reports the column where the
+// right-side status begins, or -1 when the bar carries no status. Hit
+// testing uses it to place clickable controls on the rendered frame.
+func (a AppBar) RenderWithLayout() (string, int) {
 	width := a.Width
 	if width < 1 {
 		width = 1
@@ -56,7 +64,12 @@ func (a AppBar) Render() string {
 	if gap < 0 {
 		gap = 0
 	}
-	return left + strings.Repeat(" ", gap) + right
+
+	rightStart := -1
+	if rightWidth > 0 {
+		rightStart = leftWidth + gap
+	}
+	return left + strings.Repeat(" ", gap) + right, rightStart
 }
 
 // renderLeft renders the hamburger, the brand and the screen title.

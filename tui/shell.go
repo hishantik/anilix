@@ -96,6 +96,7 @@ func (m *SearchModel) renderShell(content string) string {
 
 // renderAppBar renders the top application bar.
 func (m *SearchModel) renderAppBar() string {
+	pill := renderSubDubSwitch(m.searchState.TranslationType)
 	bar := ui.AppBar{
 		Brand:    brandWordmark(),
 		Title:    m.navTitle(),
@@ -104,7 +105,18 @@ func (m *SearchModel) renderAppBar() string {
 		Right:    m.appBarStatus(),
 		Width:    m.width,
 	}
-	return bar.Render()
+	out, rightStart := bar.RenderWithLayout()
+
+	// The SUB/DUB pill switch is the first item of the right side: its
+	// clickable range starts where the right side begins and spans the
+	// width of the pill. The bounds describe the frame being drawn, so a
+	// mouse click is checked against exactly what is on screen.
+	m.psX1, m.psX2 = 0, 0
+	if w := lipgloss.Width(pill); rightStart >= 0 && w > 0 {
+		m.psX1 = rightStart
+		m.psX2 = m.psX1 + w
+	}
+	return out
 }
 
 // appBarStatus returns the status items of the app bar, most important

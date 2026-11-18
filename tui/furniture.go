@@ -2,6 +2,7 @@ package tui
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 
@@ -20,36 +21,43 @@ func brandWordmark() string {
 	return theme.Display.Render("ANILIX")
 }
 
-// PillSwitch is a two-option toggle, rendered as adjacent pill segments
-// (e.g. SUB / DUB). Only one segment is active at a time.
+// PillSwitch is a segmented toggle rendered as adjacent pill segments
+// (e.g. SUB / DUB). The options keep their order no matter which one is
+// active: only the highlight moves, so the controls never swap places.
 type PillSwitch struct {
-	Active   string // label of the active (selected) option
-	Inactive string // label of the other option
+	// Options are the labels, in their fixed left-to-right order.
+	Options []string
+	// Current is the label of the active (selected) option.
+	Current string
 }
 
-// Render renders the pill switch: the active side as a filled pill and the
-// inactive side as a ghost label to the right, reading as one control.
+// Render renders the pill switch: the active option as a filled pill and
+// the other options as ghost labels, each in its fixed position.
 func (p PillSwitch) Render() string {
-	filled := theme.Bg(
-		theme.Fg(lipgloss.NewStyle().Bold(true), theme.OnPrimaryContainer),
-		theme.PrimaryContainer,
-	).Padding(0, 1).Render(p.Active)
-
-	ghost := theme.Fg(lipgloss.NewStyle(), theme.Muted).Render(" " + p.Inactive + " ")
-
-	return filled + ghost
+	parts := make([]string, 0, len(p.Options))
+	for _, option := range p.Options {
+		if option == p.Current {
+			parts = append(parts, theme.Bg(
+				theme.Fg(lipgloss.NewStyle().Bold(true), theme.OnPrimaryContainer),
+				theme.PrimaryContainer,
+			).Padding(0, 1).Render(option))
+			continue
+		}
+		parts = append(parts, theme.Fg(lipgloss.NewStyle(), theme.Muted).Render(" "+option+" "))
+	}
+	return strings.Join(parts, "")
 }
 
 // renderSubDubSwitch renders the sub/dub toggle of the app bar.
 //
-// It is a pill switch: the active translation is a filled pill and the
-// other one stays muted, so the two read as one tappable control.
+// It is a pill switch with a fixed order - SUB first, DUB second - so
+// toggling between them moves only the highlight, never the labels.
 func renderSubDubSwitch(translationType string) string {
-	on, off := "SUB", "DUB"
+	current := "SUB"
 	if translationType != "sub" {
-		on, off = off, on
+		current = "DUB"
 	}
-	return PillSwitch{Active: on, Inactive: off}.Render()
+	return PillSwitch{Options: []string{"SUB", "DUB"}, Current: current}.Render()
 }
 
 // loadingLine renders a spinner with a label.

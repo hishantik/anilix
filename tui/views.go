@@ -54,6 +54,9 @@ func (m *SearchModel) View() tea.View {
 
 	v := tea.NewView(m.renderShell(content))
 	v.AltScreen = true
+	// The SUB/DUB pill switch of the app bar is clickable: cell motion
+	// delivers the clicks the Update loop uses to toggle the translation.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

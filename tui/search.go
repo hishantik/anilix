@@ -133,8 +133,14 @@ type SearchModel struct {
 
 	// Kitty graphics
 	kittyImageID uint32 // current image ID in terminal memory, for cleanup
+
 	// Design system showcase
 	themeScroll int
+
+	// Pill switch (SUB / DUB) in the app bar: the character range so a
+	// mouse click on either segment toggles the selected translation.
+	psX1 int // first character column of the filled pill (active option)
+	psX2 int // last character column + 1 (exclusive end)
 }
 
 func NewSearchModel() *SearchModel {
@@ -269,6 +275,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// resize asks for a new one. The ask is free when the size did not
 		// change - ensureCover renders only a missing or mis-sized cover.
 		return m, m.coverCmd()
+
+	case tea.MouseMsg:
+		// A click on the SUB/DUB pill switch toggles the translation.
+		if msg, ok := msg.(tea.MouseClickMsg); ok && msg.Y == 0 {
+			if m.pillSwitchClicked(msg.X) {
+				m.toggleTranslation()
+			}
+		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -1226,6 +1240,27 @@ func (m *SearchModel) GetSelectedAnime() *source.Anime {
 		return m.searchState.Results[m.searchState.Selected]
 	}
 	return nil
+}
+
+// pillSwitchClicked reports whether a mouse click at column x hit the
+// SUB/DUB pill switch in the app bar. The bounds are set by renderAppBar
+// and describe the frame the click lands on.
+func (m *SearchModel) pillSwitchClicked(x int) bool {
+	return m.psX1 < m.psX2 && x >= m.psX1 && x < m.psX2
+}
+
+// toggleTranslation flips the selected translation between sub and dub,
+// wiring the change through the state, the configuration and the provider
+// exactly as the ctrl+t key does.
+func (m *SearchModel) toggleTranslation() {
+	s := &m.searchState.TranslationType
+	if *s != "sub" {
+		*s = "sub"
+	} else {
+		*s = "dub"
+	}
+	m.hianimeProvider.SetTranslation(*s)
+	config.Set("translation_type", *s)
 }
 
 func RunSearch() (*SelectionResult, error) {

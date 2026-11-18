@@ -8,6 +8,8 @@ import (
 
 	"charm.land/bubbletea/v2"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/source"
@@ -500,6 +502,104 @@ func TestTheSettingsCursorStaysInRange(t *testing.T) {
 	}
 	if got := updated.(*SearchModel).settingsState.Cursor; got != settingsRowCount-1 {
 		t.Errorf("the cursor ended on row %d, want %d", got, settingsRowCount-1)
+	}
+}
+
+// TestThePillSwitchNeverSwaps checks that the SUB/DUB pill switch renders
+// its labels in a fixed order no matter which one is active. The filled
+// pill (the active option) always comes first in the Options slice, and
+// the ghost (the inactive option) always comes second, so the controls
+// never swap places when toggling.
+func TestThePillSwitchNeverSwaps(t *testing.T) {
+	tempHome(t)
+	m := NewSearchModel()
+	m.resize(80, 30)
+	m.state = searchState
+
+	m.searchState.TranslationType = "sub"
+	subView := shellStrip(m.renderAppBar())
+	subAt := strings.Index(subView, "SUB")
+	dubAt := strings.Index(subView, "DUB")
+	if subAt < 0 || dubAt < 0 {
+		t.Fatalf("the app bar lost the pill switch:\n%s", subView)
+	}
+	// When sub is active the filled pill (SUB) is the first segment,
+	// so SUB renders to the LEFT of DUB in the string.
+	if subAt >= dubAt {
+		t.Errorf("SUB did not render left of DUB while sub is selected: sub %d, dub %d", subAt, dubAt)
+	}
+
+	m.searchState.TranslationType = "dub"
+	dubView := shellStrip(m.renderAppBar())
+	subAt = strings.Index(dubView, "SUB")
+	dubAt = strings.Index(dubView, "DUB")
+	if subAt < 0 || dubAt < 0 {
+		t.Fatalf("the app bar lost the pill switch:\n%s", dubView)
+	}
+	// The labels never swap: SUB stays the left segment and DUB the right
+	// one even when dub is active - only the highlight moves to DUB.
+	if subAt >= dubAt {
+		t.Errorf("the labels swapped while dub is selected: sub %d, dub %d", subAt, dubAt)
+	}
+
+	// The bar has the same width regardless of which option is active.
+	if len(subView) != len(dubView) {
+		t.Errorf("the switch changed the width of the bar: sub %d, dub %d", len(subView), len(dubView))
+	}
+}
+
+// TestThePillSwitchClickToggles checks that a mouse click inside the
+// bounds of the SUB/DUB pill switch toggles the translation, and a click
+// outside it does nothing.
+func TestThePillSwitchClickToggles(t *testing.T) {
+	tempHome(t)
+	m := NewSearchModel()
+	m.resize(80, 30)
+	m.state = searchState
+	defer config.Set("translation_type", "sub")
+
+	m.renderAppBar() // sets the clickable bounds of the pill switch
+	if m.psX1 >= m.psX2 {
+		t.Fatalf("the pill switch has no bounds: %d..%d", m.psX1, m.psX2)
+	}
+
+	// The bounds must cover the rendered pill: the label text sits inside
+	// the clickable segment on the drawn app bar, at several widths.
+	for _, width := range []int{120, 100, 80, 60} {
+		m.resize(width, 40)
+		m.state = searchState
+		stripped := ansi.Strip(m.renderAppBar())
+		if got := ansi.StringWidth(stripped); got != width {
+			t.Fatalf("width %d: the bar is %d cells", width, got)
+		}
+		idx := strings.Index(stripped, "SUB")
+		if idx < 0 {
+			continue // the pill is dropped on a too-narrow bar
+		}
+		textStart := ansi.StringWidth(stripped[:idx])
+		if m.psX1 > textStart || textStart+3 > m.psX2 {
+			t.Errorf("width %d: bounds %d..%d do not cover the label at %d",
+				width, m.psX1, m.psX2, textStart)
+		}
+		if span := m.psX2 - m.psX1; span != 10 {
+			t.Errorf("width %d: the pill spans %d cells, want 10", width, span)
+		}
+	}
+
+	// A click inside the bounds flips sub to dub.
+	m.searchState.TranslationType = "sub"
+	m.toggleTranslation()
+	if m.searchState.TranslationType != "dub" {
+		t.Errorf("the toggle kept %q, want dub", m.searchState.TranslationType)
+	}
+	if config.GetString("translation_type") != "dub" {
+		t.Errorf("the configuration kept %q, want dub", config.GetString("translation_type"))
+	}
+
+	// And back again.
+	m.toggleTranslation()
+	if m.searchState.TranslationType != "sub" {
+		t.Errorf("the toggle kept %q, want sub", m.searchState.TranslationType)
 	}
 }
 
