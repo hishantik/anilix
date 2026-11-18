@@ -20,23 +20,36 @@ func brandWordmark() string {
 	return theme.Display.Render("ANILIX")
 }
 
+// PillSwitch is a two-option toggle, rendered as adjacent pill segments
+// (e.g. SUB / DUB). Only one segment is active at a time.
+type PillSwitch struct {
+	Active   string // label of the active (selected) option
+	Inactive string // label of the other option
+}
+
+// Render renders the pill switch: the active side as a filled pill and the
+// inactive side as a ghost label to the right, reading as one control.
+func (p PillSwitch) Render() string {
+	filled := theme.Bg(
+		theme.Fg(lipgloss.NewStyle().Bold(true), theme.OnPrimaryContainer),
+		theme.PrimaryContainer,
+	).Padding(0, 1).Render(p.Active)
+
+	ghost := theme.Fg(lipgloss.NewStyle(), theme.Muted).Render(" " + p.Inactive + " ")
+
+	return filled + ghost
+}
+
 // renderSubDubSwitch renders the sub/dub toggle of the app bar.
 //
-// It is a segmented control: the active translation carries the accent
-// colour and the other one stays muted. The separator is drawn in the
-// outline colour, so the two halves read as one control instead of two
-// labels that happen to sit next to each other.
+// It is a pill switch: the active translation is a filled pill and the
+// other one stays muted, so the two read as one tappable control.
 func renderSubDubSwitch(translationType string) string {
 	on, off := "SUB", "DUB"
 	if translationType != "sub" {
 		on, off = off, on
 	}
-
-	active := theme.Fg(lipgloss.NewStyle().Bold(true), theme.Primary).Render(on)
-	inactive := theme.Fg(lipgloss.NewStyle(), theme.Muted).Render(off)
-	separator := theme.Fg(lipgloss.NewStyle(), theme.Outline).Render("│")
-
-	return active + " " + separator + " " + inactive
+	return PillSwitch{Active: on, Inactive: off}.Render()
 }
 
 // loadingLine renders a spinner with a label.
