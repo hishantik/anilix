@@ -197,9 +197,41 @@ if not errorlevel 1 (
 
 call :warning "No supported video player found. Anilix needs one of: mpv, vlc"
 echo.
-echo  Install suggestions:
-echo    %C_PRIMARY%winget install mpv%C_RESET%     (recommended)
-echo    or download from: https://mpv.io/installation/
+
+:: Try to install mpv automatically
+call :info "Attempting to install mpv..."
+
+:: Check if winget is available
+where winget >nul 2>&1
+if not errorlevel 1 (
+    echo  Installing mpv via winget (may ask for confirmation)...
+    winget install mpv --accept-source-agreements --accept-package-agreements >nul 2>&1
+    if not errorlevel 1 (
+        call :success "mpv installed successfully!"
+        exit /b 0
+    )
+    call :warning "winget install failed. Trying alternative method..."
+)
+
+:: Try choco if winget failed
+where choco >nul 2>&1
+if not errorlevel 1 (
+    echo  Installing mpv via chocolatey...
+    choco install mpv -y >nul 2>&1
+    if not errorlevel 1 (
+        call :warning "choco install failed."
+    ) else (
+        call :success "mpv installed successfully via chocolatey!"
+        exit /b 0
+    )
+)
+
+:: All auto-install methods failed, show manual instructions
+call :warning "Could not auto-install mpv. Please install manually:"
+echo.
+echo  Option 1: %C_PRIMARY%winget install mpv%C_RESET%     ^(recommended^)
+echo  Option 2: Download from: https://mpv.io/installation/
+echo  Option 3: %C_PRIMARY%choco install mpv%C_RESET%     ^(if you have Chocolatey^)
 exit /b 0
 
 :: ─── UI Helpers ─────────────────────────────────────────────────────────────
