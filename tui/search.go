@@ -119,6 +119,17 @@ type SearchModel struct {
 	watchlistCoverR   int
 	watchlistCoverURL string
 
+	// Discover
+	//
+	// discover holds trending/popular anime for the discover screen.
+	// discoverCover* cache the rendered artwork of the selected entry,
+	// the same way the watchlist caches its covers.
+	discover       *DiscoverState
+	discoverCover  string
+	discoverCoverW int
+	discoverCoverR int
+	discoverURL    string
+
 	// AniList account screen
 	anilistCursor int // 0 = tracking toggle, 1 = login/logout
 
@@ -224,6 +235,7 @@ func NewSearchModel() *SearchModel {
 		episodeMetadataCache: make(map[string]*jikan.Episode),
 		recentSearches:       loadRecentSearches(),
 		watchlist:            &WatchlistState{},
+		discover:             &DiscoverState{Section: "trending"},
 		trackingEnabled:      config.GetBool("anilist.tracking.enabled") && config.GetString("anilist.token") != "",
 		anilistToken:         config.GetString("anilist.token"),
 		anilistUsername:      config.GetString("anilist.username"),
@@ -364,6 +376,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.state == watchlistState {
 			return m.handleWatchlistKey(msg)
+		}
+
+		if m.state == discoverState {
+			return m.handleDiscoverKey(msg)
 		}
 
 		if m.state == searchState && m.textInput.Focused() {
@@ -1037,6 +1053,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.watchlistCoverR = msg.Rows
 			}
 		}
+		if m.state == discoverState && msg.Index == discoverCoverIndex {
+			// The URL check drops a download that came back after the
+			// cursor moved, the same rule the watchlist applies.
+			if entry := m.discoverSelected(); entry != nil && msg.Rendered != "" && msg.URL == entry.Cover {
+				m.discoverCover = msg.Rendered
+				m.discoverCoverW = msg.Width
+				m.discoverCoverR = msg.Rows
+			}
+		}
 		if msg.Rendered != "" {
 			// Update the cached metadata with the rendered cover
 			if meta, ok := m.metadataCache[msg.Index]; ok {
@@ -1110,6 +1135,17 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.watchlist.Cursor = 0
 		m.watchlist.Scroll = 0
 		cmds = append(cmds, m.watchlistCoverCmd())
+
+	case DiscoverLoadedMsg:
+		if m.discover == nil {
+			m.discover = &DiscoverState{}
+		}
+		m.discover.Loading = false
+		m.discover.Err = msg.Err
+		m.discover.Trending = msg.Trending
+		m.discover.Popular = msg.Popular
+		m.discover.Selected = 0
+		m.discover.Scroll = 0
 
 	case AniListLoginMsg:
 		m.state = settingsState

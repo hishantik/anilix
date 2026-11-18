@@ -133,6 +133,36 @@ func (c *JikanClient) SearchAnime(ctx context.Context, query string) (*AnimeResp
 	return &result, nil
 }
 
+// GetTopAnime fetches the top airing anime (the Jikan /top/anime
+// endpoint), which powers the discover screen.
+func (c *JikanClient) GetTopAnime(ctx context.Context, filter string) (*AnimeResponse, error) {
+	if c.IsDown() {
+		return nil, fmt.Errorf("jikan api unreachable (recent failure), skipping")
+	}
+	c.rateLimiter.waitForToken()
+
+	url := fmt.Sprintf("%s/top/anime?limit=20&filter=%s", c.baseURL, url.QueryEscape(filter))
+
+	headers := map[string]string{
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Accept":     "application/json",
+	}
+
+	response, err := curl.Get(ctx, url, headers)
+	if err != nil {
+		c.markDown()
+		return nil, fmt.Errorf("curl failed: %w", err)
+	}
+	c.markUp()
+
+	var result AnimeResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // GetAnime fetches full anime details by MAL ID (with caching)
 func (c *JikanClient) IsCached(malID int) bool {
 	c.cacheMu.RLock()

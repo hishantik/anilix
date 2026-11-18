@@ -50,6 +50,8 @@ func (m *SearchModel) View() tea.View {
 		content = m.viewConfirmLogout()
 	case themeState:
 		content = m.viewThemeShowcase()
+	case discoverState:
+		content = m.viewDiscoverState()
 	}
 
 	v := tea.NewView(m.renderShell(content))

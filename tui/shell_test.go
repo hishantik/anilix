@@ -119,17 +119,17 @@ func TestNarrowTerminalUsesTheModalDrawer(t *testing.T) {
 	}
 }
 
-// TestMenuKeyTogglesTheDrawer checks the "m" binding.
+// TestMenuKeyTogglesTheDrawer checks the ctrl+e binding.
 func TestMenuKeyTogglesTheDrawer(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 30)
 
-	model := applyKey(t, m, keyRune('m'))
+	model := applyKey(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	if !model.navHasFocus() {
 		t.Error("the menu key did not give the keyboard to the drawer")
 	}
 
-	model = applyKey(t, model, keyRune('m'))
+	model = applyKey(t, model, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	if model.navHasFocus() {
 		t.Error("the menu key did not close the drawer")
 	}
@@ -140,7 +140,7 @@ func TestEscapeClosesTheDrawer(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(40, 30)
 
-	model := applyKey(t, m, keyRune('m'))
+	model := applyKey(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	if !model.navVisible() {
 		t.Fatal("the drawer did not open")
 	}
@@ -156,7 +156,7 @@ func TestArrowKeysMoveTheDrawerCursor(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 30)
 
-	model := applyKey(t, m, keyRune('m'))
+	model := applyKey(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	if model.nav.cursor != navIndexOf(navSearch) {
 		t.Fatalf("the drawer did not open on the current page")
 	}
@@ -166,7 +166,6 @@ func TestArrowKeysMoveTheDrawerCursor(t *testing.T) {
 		t.Fatalf("the down key moved the cursor to %v, want History", got)
 	}
 
-	// The destinations that cannot be opened are skipped.
 	model = applyKey(t, model, keyRune('j'))
 	if got := navDestinations[model.nav.cursor].id; got != navWatchlist {
 		t.Fatalf("the j key moved the cursor to %v, want Watchlist", got)
@@ -188,7 +187,7 @@ func TestEnterOpensTheDestination(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 30)
 
-	model := applyKey(t, m, keyRune('m'))
+	model := applyKey(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	model = applyKey(t, model, tea.KeyPressMsg{Code: tea.KeyDown}) // History
 	model = applyKey(t, model, tea.KeyPressMsg{Code: tea.KeyEnter})
 
@@ -207,7 +206,7 @@ func TestDrawerKeepsTheKeyboardAwayFromTheContent(t *testing.T) {
 	m.resize(100, 30)
 	m.searchState.Results = nil
 
-	model := applyKey(t, m, keyRune('m'))
+	model := applyKey(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
 	before := model.nav.cursor
 
 	model = applyKey(t, model, keyRune('j'))

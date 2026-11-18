@@ -42,9 +42,9 @@ func TestNavigationDestinationsAreKnown(t *testing.T) {
 	}
 }
 
-// TestUnsupportedDestinationsAreNotSelectable checks that the destinations
-// the application cannot open stay in the drawer but cannot be reached.
-func TestUnsupportedDestinationsAreNotSelectable(t *testing.T) {
+// TestTheDiscoverDestinationIsReachable checks that the discover screen
+// opens from the drawer and starts loading its catalogue.
+func TestTheDiscoverDestinationIsReachable(t *testing.T) {
 	m := NewSearchModel()
 	m.resize(100, 40)
 
@@ -53,12 +53,15 @@ func TestUnsupportedDestinationsAreNotSelectable(t *testing.T) {
 		t.Fatalf("destination %v is missing from the drawer", navDiscover)
 	}
 	m.nav.cursor = idx
-	if m.navAvailable(navDiscover) {
-		t.Error("Discover must not be available")
+	if !m.navAvailable(navDiscover) {
+		t.Fatal("Discover is not available")
 	}
 	m.activateNav()
-	if m.state != searchState {
+	if m.state != discoverState {
 		t.Errorf("selecting %v changed the screen to %v", navDiscover, m.state)
+	}
+	if !m.discover.Loading {
+		t.Error("opening the discover screen did not start loading")
 	}
 }
 

@@ -156,3 +156,11 @@ type UpdateCheckMsg struct {
 type UpdateCompleteMsg struct {
 	Err error
 }
+
+// DiscoverLoadedMsg is sent when the discover screen finished fetching
+// the trending and popular catalogues, or when fetching them failed.
+type DiscoverLoadedMsg struct {
+	Trending []*source.Anime
+	Popular  []*source.Anime
+	Err      error
+}

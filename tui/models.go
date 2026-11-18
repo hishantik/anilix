@@ -29,6 +29,8 @@ const (
 	anilistState
 	// confirmLogoutState asks before the AniList credentials are dropped.
 	confirmLogoutState
+	// discoverState shows trending and popular anime for discovery
+	discoverState
 )
 
 // SelectionResult holds the selected anime and episode
@@ -117,6 +119,18 @@ type WatchlistState struct {
 	Entries []*anilist.WatchlistEntry
 	Cursor  int
 	Scroll  int // the first row of the visible window of a long list
+}
+
+// DiscoverState holds the state for the discover screen: trending and
+// popular anime from AniList.
+type DiscoverState struct {
+	Loading   bool
+	Err       error
+	Trending  []*source.Anime
+	Popular   []*source.Anime
+	Selected  int
+	Scroll    int
+	Section   string // "trending" or "popular"
 }
 
 // NewSearchState creates a new search state

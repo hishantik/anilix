@@ -42,6 +42,13 @@ func (j *JikanProvider) Search(query string) ([]*source.Anime, error) {
 }
 
 func (j *JikanProvider) mapToAnime(data *AnimeData) *source.Anime {
+	return MapToAnime(data)
+}
+
+// MapToAnime converts a Jikan anime entry into the common source.Anime
+// type. It is exported because the discover screen in the TUI lists top
+// anime fetched straight from the client.
+func MapToAnime(data *AnimeData) *source.Anime {
 	anime := &source.Anime{
 		Name:         data.TitleEnglish,
 		URL:          data.URL,

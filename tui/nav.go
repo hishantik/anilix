@@ -50,12 +50,9 @@ type navDestination struct {
 
 // navDestinations is the content of the drawer, in the order it is drawn.
 //
-// The list covers the destinations the design calls for. "Discover" has
-// no counterpart in the application yet - there is no seasonal
-// catalogue - so it is listed as unavailable instead of being faked with
-// an empty screen. "Watchlist" is the saved list of the AniList account.
+// "Watchlist" is the saved list of the AniList account.
 var navDestinations = []navDestination{
-	{id: navDiscover, label: "Discover", icon: theme.IconDiscover, hint: "n/a", supported: false},
+	{id: navDiscover, label: "Discover", icon: theme.IconDiscover, supported: true},
 	{id: navSearch, label: "Search", icon: theme.IconSearch, supported: true},
 	{id: navHistory, label: "History", icon: theme.IconHistory, supported: true},
 	{id: navWatchlist, label: "Watchlist", icon: theme.IconWatchlist, supported: true},
@@ -101,7 +98,7 @@ func (m *SearchModel) navVisible() bool {
 // showcase) take the keyboard away from the drawer.
 func (m *SearchModel) navFocusable() bool {
 	switch m.state {
-	case searchState, animeState, detailState, historyState, watchlistState:
+	case searchState, animeState, detailState, historyState, watchlistState, discoverState:
 		return true
 	}
 	return false
@@ -265,6 +262,8 @@ func (m *SearchModel) activeNav() navID {
 		return navWatchlist
 	case detailState:
 		return navEpisodes
+	case discoverState:
+		return navDiscover
 	case settingsState:
 		if m.settingsState.Cursor == settingsRowAniList {
 			return navAniList
@@ -451,6 +450,8 @@ func (m *SearchModel) activateNav() tea.Cmd {
 	switch dest.id {
 	case navSearch:
 		cmd = m.gotoSearch()
+	case navDiscover:
+		cmd = m.gotoDiscover()
 	case navHistory:
 		cmd = m.gotoHistory()
 	case navWatchlist:
