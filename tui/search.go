@@ -248,7 +248,13 @@ func (m *SearchModel) Init() tea.Cmd {
 	// Ask the terminal about its capabilities; the answer is recorded by
 	// HandlePrimaryDeviceAttributes. A terminal that does not answer
 	// simply keeps the renderers the environment already proves.
-	return tea.Raw(ansi.RequestPrimaryDeviceAttributes)
+	//
+	// The loading spinner ticks from the start: the screens show it while
+	// a request runs, and a chain that only starts when a request begins
+	// would leave the first frames frozen. Duplicate Tick commands are
+	// harmless - the spinner rejects messages carrying a stale tag, so
+	// only one chain survives.
+	return tea.Batch(tea.Raw(ansi.RequestPrimaryDeviceAttributes), m.loading.Tick)
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
