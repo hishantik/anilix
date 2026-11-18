@@ -68,8 +68,6 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 			targetURL = u
 		}
 
-		fmt.Fprintf(os.Stderr, "[anilix-proxy] %s %s (target: %.120s)\n", r.Method, r.URL.String(), targetURL)
-
 		// Check playlist cache (2s TTL)
 		plCacheMu.Lock()
 		if e, ok := plCache[targetURL]; ok && time.Now().Before(e.expiresAt) {
@@ -116,8 +114,6 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 				ct = sniffed
 			}
 		}
-
-		fmt.Fprintf(os.Stderr, "[anilix-proxy] upstream %d %s (ct: %s)\n", resp.StatusCode, targetURL, ct)
 
 		// Playlist: read fully, rewrite URLs, cache 2s — must handle
 		// before WriteHeader because rewriting changes Content-Length.
