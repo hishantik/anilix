@@ -282,6 +282,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.pillSwitchClicked(msg.X) {
 				m.toggleTranslation()
 			}
+			return m, nil
+		}
+		// A click on a recent search row re-runs that query. The search
+		// field and the recent searches header take the first three
+		// content rows (after the app bar), so a click further down maps
+		// onto the list.
+		if msg, ok := msg.(tea.MouseClickMsg); ok {
+			if click := m.recentSearchAt(msg.Y - 1); click >= 0 && click < len(m.recentSearches) {
+				return m.selectRecentSearch(click)
+			}
 		}
 
 	case spinner.TickMsg:
@@ -355,19 +365,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Select):
 				// If recent searches are showing and cursor is on one, use it
 				if m.textInput.Value() == "" && len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 && m.recentCursor < len(m.recentSearches) {
-					query := m.recentSearches[m.recentCursor]
-					m.textInput.SetValue(query)
-					m.lastQuery = query
-					m.searchState.Query = query
-					m.searchState.Loading = true
-					m.progressPercent = 0
-					m.progressTarget = 0.3
-					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
-					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-						return progressTickMsg{}
-					}))
-					return m, tea.Batch(cmds...)
+					return m.selectRecentSearch(m.recentCursor)
 				}
 				query := m.textInput.Value()
 				if len(query) >= 2 {
@@ -776,21 +774,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.recentCursor++
 				}
 			case key.Matches(msg, m.keymap.Select):
-				if m.recentCursor < len(m.recentSearches) {
-					query := m.recentSearches[m.recentCursor]
-					m.textInput.SetValue(query)
-					m.lastQuery = query
-					m.searchState.Query = query
-					m.searchState.Loading = true
-					m.progressPercent = 0
-					m.progressTarget = 0.3
-					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
-					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-						return progressTickMsg{}
-					}))
-					return m, tea.Batch(cmds...)
-				}
+				return m.selectRecentSearch(m.recentCursor)
 			case key.Matches(msg, m.keymap.Back):
 				// Esc from recent searches focuses the search bar
 				m.textInput.Focus()
@@ -1247,6 +1231,49 @@ func (m *SearchModel) GetSelectedAnime() *source.Anime {
 // and describe the frame the click lands on.
 func (m *SearchModel) pillSwitchClicked(x int) bool {
 	return m.psX1 < m.psX2 && x >= m.psX1 && x < m.psX2
+}
+
+// recentSearchAt maps a content-region row (0 = the row under the app bar)
+// to an index into the recent searches, or -1 when the row does not hold a
+// recent search entry.
+//
+// The recent searches are on screen only on a fresh search screen: the
+// field, a blank line and the section header take the first three rows,
+// and the entries follow one per row.
+func (m *SearchModel) recentSearchAt(y int) int {
+	if m.state != searchState || m.textInput.Value() != "" ||
+		m.searchState.Loading || m.searchState.Err != nil ||
+		len(m.searchState.Results) > 0 || len(m.recentSearches) == 0 {
+		return -1
+	}
+	index := y - 3
+	if index < 0 || index >= len(m.recentSearches) {
+		return -1
+	}
+	return index
+}
+
+// selectRecentSearch starts a search for the recent query at the index,
+// exactly as the enter key does on the same screen.
+func (m *SearchModel) selectRecentSearch(index int) (tea.Model, tea.Cmd) {
+	if index < 0 || index >= len(m.recentSearches) {
+		return m, nil
+	}
+	m.recentCursor = index
+	query := m.recentSearches[index]
+	m.textInput.SetValue(query)
+	m.lastQuery = query
+	m.searchState.Query = query
+	m.searchState.Loading = true
+	m.progressPercent = 0
+	m.progressTarget = 0.3
+	m.textInput.Blur()
+	return m, tea.Batch(
+		m.doSearch(query),
+		tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return progressTickMsg{}
+		}),
+	)
 }
 
 // toggleTranslation flips the selected translation between sub and dub,
