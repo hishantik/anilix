@@ -693,6 +693,12 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keymap.Select):
 			switch m.state {
 			case searchState:
+				// If recent searches are showing, Enter re-runs the cursor
+				// query. openSelectedAnime needs results; it returns nil when
+				// results are absent and silently consumes the key.
+				if len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 && m.recentCursor < len(m.recentSearches) {
+					return m.selectRecentSearch(m.recentCursor)
+				}
 				return m, m.openSelectedAnime()
 
 			case animeState:

@@ -79,3 +79,55 @@ func TestTheOpenDrawerCoversTheRecentSearches(t *testing.T) {
 		t.Errorf("recentSearchAt(%d) = %d with the drawer open, want -1", recentSearchesTop, got)
 	}
 }
+
+// TestEnterOnRecentSearchRunsIt checks the keyboard path: Enter must run
+// the cursor query. Before the fix the state-wide Select handler consumed
+// Enter and openSelectedAnime, seeing no results, did nothing.
+func TestEnterOnRecentSearchRunsIt(t *testing.T) {
+	tempHome(t)
+	m := NewSearchModel()
+	m.resize(100, 30)
+	m.recentSearches = []string{"frieren", "monster"}
+	m.recentCursor = 1
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(*SearchModel)
+	if m.lastQuery != "monster" {
+		t.Errorf("Enter ran %q, want monster", m.lastQuery)
+	}
+	if m.searchState.Query != "monster" {
+		t.Errorf("Query = %q, want monster", m.searchState.Query)
+	}
+	if !m.searchState.Loading {
+		t.Error("the search is not loading")
+	}
+	if cmd == nil {
+		t.Error("Enter returned no command: the search never starts")
+	}
+}
+
+// TestScrollThenEnterOnRecentSearches checks up/down plus Enter together:
+// the key pattern the user flows through on the recent list.
+func TestScrollThenEnterOnRecentSearches(t *testing.T) {
+	tempHome(t)
+	m := NewSearchModel()
+	m.resize(100, 30)
+	m.recentSearches = []string{"frieren", "monster", "dandadan"}
+
+	m = applyKey(t, m, tea.KeyPressMsg{Code: 'j'})
+	if m.recentCursor != 1 {
+		t.Fatalf("first down moved to %d, want 1", m.recentCursor)
+	}
+	m = applyKey(t, m, tea.KeyPressMsg{Code: 'j'})
+	if m.recentCursor != 2 {
+		t.Fatalf("second down moved to %d, want 2", m.recentCursor)
+	}
+	m = applyKey(t, m, tea.KeyPressMsg{Code: 'k'})
+	if m.recentCursor != 1 {
+		t.Fatalf("up moved to %d, want 1", m.recentCursor)
+	}
+	m = applyKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.lastQuery != "monster" {
+		t.Errorf("Enter ran %q, want monster", m.lastQuery)
+	}
+}
