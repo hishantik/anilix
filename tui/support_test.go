@@ -444,6 +444,10 @@ func TestWatchlistKeysWalkTheList(t *testing.T) {
 
 // TestTheHistoryScreenGroupsTheEntries checks that the history groups its
 // entries under the day they were played on.
+//
+// The offsets are relative to midnight, not to "now": an offset from now
+// drifts across a day boundary depending on the wall clock the test runs
+// at (a CI run at 00:30 would put a "two hours ago" entry on yesterday).
 func TestTheHistoryScreenGroupsTheEntries(t *testing.T) {
 	tempHome(t)
 
@@ -451,10 +455,11 @@ func TestTheHistoryScreenGroupsTheEntries(t *testing.T) {
 	m.resize(80, 30)
 	m.state = historyState
 	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	m.watchHistoryCache = []historyEntry{
-		{Name: "Frieren", ShowID: "21", Episode: "3", At: now.Add(-2 * time.Hour)},
-		{Name: "One Piece", ShowID: "21x", Episode: "1100", At: now.Add(-30 * time.Hour)},
-		{Name: "Dandadan", ShowID: "99", Episode: "1", At: now.Add(-48 * time.Hour)},
+		{Name: "Frieren", ShowID: "21", Episode: "3", At: midnight.Add(2 * time.Hour)},
+		{Name: "One Piece", ShowID: "21x", Episode: "1100", At: midnight.Add(-12 * time.Hour)},
+		{Name: "Dandadan", ShowID: "99", Episode: "1", At: midnight.Add(-48 * time.Hour)},
 	}
 
 	view := shellStrip(m.viewHistoryState())
@@ -463,8 +468,11 @@ func TestTheHistoryScreenGroupsTheEntries(t *testing.T) {
 			t.Errorf("the history screen lost %q:\n%s", want, view)
 		}
 	}
-	if !strings.Contains(view, "Nov") {
-		t.Errorf("the older entries are not grouped under their date:\n%s", view)
+	// The entry from two days ago is grouped under its date, whatever
+	// month the test runs in.
+	older := watchDayLabel(m.watchHistoryCache[2].At)
+	if !strings.Contains(view, older) {
+		t.Errorf("the older entries are not grouped under %q:\n%s", older, view)
 	}
 
 	// An empty history still says so instead of going blank.
