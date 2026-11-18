@@ -35,13 +35,13 @@ A terminal anime streaming client written in Go, styled with Material Design 3. 
 
 ## Overview
 
-Anilix is a Go CLI/TUI application that lets users search for anime, browse episodes, and stream video directly from the terminal. It scrapes streaming from hianime.at and enriches results with metadata from Jikan (MyAnimeList API) and AniList.
+Anilix is a Go CLI/TUI application that lets users search for anime, browse episodes, and stream video directly from the terminal. It scrapes streaming from hianime.at and enriches results with metadata from Jikan (MyAnimeList API), AniList and Kitsu.
 
 ### Key Features
 
 - **Interactive TUI** - Two-column search layout with instant metadata preview, built on Bubble Tea v2
-- **Batch Metadata** - Fetches all search result metadata in a single call for instant navigation
-- **Multi-provider Search** - Jikan + AniList metadata providers with unified results
+- **Batch Metadata** - Fetches all search result metadata in one batched call, with Jikan and Kitsu fallbacks for entries AniList does not match
+- **Multi-provider Search** - AniList + Kitsu ID resolution (one request each), Jikan for MAL-only entries, unified results
 - **Quality Selection** - Cycle through presets: best, 1080p, 720p, 480p, 360p, auto
 - **Sub/Dub Toggle** - Switch between subtitled and dubbed versions
 - **Auto-Skip Intro/Outro** - AniSkip integration with mpv Lua script
