@@ -40,7 +40,7 @@ Anilix is a Go CLI/TUI application that lets users search for anime, browse epis
 ### Key Features
 
 - **Interactive TUI** - Two-column search layout with instant metadata preview, built on Bubble Tea v2
-- **Batch Metadata** - Fetches all search result metadata in one batched call, with Jikan and Kitsu fallbacks for entries AniList does not match
+- **Batch Metadata** - Fetches all search result metadata in one batched call, with Jikan and Kitsu fallbacks for entries AniList does not match, and the hianime show page as a provisional last resort
 - **Multi-provider Search** - AniList + Kitsu ID resolution (one request each), Jikan for MAL-only entries, unified results
 - **Quality Selection** - Cycle through presets: best, 1080p, 720p, 480p, 360p, auto
 - **Sub/Dub Toggle** - Switch between subtitled and dubbed versions
@@ -120,6 +120,7 @@ anilix/
 │   └── hianime/
 │       ├── hianime.go               # Provider (Source impl - search/episodes/streams)
 │       ├── client.go                # hianime.at scraping client
+│       ├── meta.go                  # Show-page metadata parser + cache
 │       ├── blob.go                  # Embed config deobfuscation (base64 + XOR)
 │       ├── timeouts.go              # Per-operation timeouts
 │       ├── init.go                  # Hianime provider registration
@@ -325,7 +326,7 @@ Bubble Tea v2 terminal UI with an Elm architecture state machine.
 
 **Async operations (tea.Cmd):**
 - `doSearch(query)` - Search hianime, enrich MAL IDs with one Jikan lookup
-- `fetchMetadataBatch(results)` - Batch-fetch AniList metadata for all results
+- `fetchMetadataBatch(results)` - Batch-fetch AniList metadata for all results, then Kitsu/Jikan fallbacks; its `FollowUp` is `showPagePanelsCmd`, which reads the hianime show page of entries no metadata API knows (provisional `Source: "Hianime"`, capped at five pages)
 - `fetchEpisodes(anime)` - Fetch episodes for selected anime
 - `fetchEpisodeMetadata()` - Fetch Jikan episode metadata on navigation
 - `playEpisode(anime, episodeNum)` - Resolve streams and launch player
@@ -403,6 +404,7 @@ Scraping client for [hianime.at](https://hianime.at), the provider current ani-c
 - `Search()` - Scrape search results; MAL IDs are filled by the TUI via a single Jikan title match
 - `EpisodesOf()` - Episode list; opportunistically recovers `MALID` from the embed URL (`/mal/<id>/`)
 - `StreamsOf()` - Episode → data-id → embed → m3u8 master playlist → quality variants (sorted best first, with Referer set)
+- `ShowMetadata()` - Parse the show page's info block (overview, Japanese title, synonyms, aired, duration, status, MAL score, genres, studios, producers) and film stats; cached 30 min. This is the TUI's provisional last-resort panel (`Source: "Hianime"`)
 
 **Notes:**
 - The servers API needs hianime's internal `data-id`, not the episode number; it is resolved from the episode list.
