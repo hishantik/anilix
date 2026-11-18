@@ -1298,6 +1298,11 @@ func (m *SearchModel) recentSearchAt(y int) int {
 		len(m.searchState.Results) > 0 || len(m.recentSearches) == 0 {
 		return -1
 	}
+	// The modal drawer covers the content region: the recent searches are
+	// not on screen, so a click must not reach them through the drawer.
+	if !m.navPersistent() && m.nav.overlay {
+		return -1
+	}
 	index := y - recentSearchesTop
 	if index < 0 || index >= len(m.recentSearches) {
 		return -1

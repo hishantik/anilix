@@ -61,3 +61,21 @@ func TestClickingARecentSearchRunsIt(t *testing.T) {
 		t.Errorf("the cursor is on %d, want 1", m.recentCursor)
 	}
 }
+
+// TestTheOpenDrawerCoversTheRecentSearches checks that a click does not
+// reach the list through the modal drawer: the drawer replaces the content
+// region, so the rows under it are not the recent searches any more.
+func TestTheOpenDrawerCoversTheRecentSearches(t *testing.T) {
+	tempHome(t)
+	m := NewSearchModel()
+	m.resize(50, 30) // compact: the drawer is a modal overlay
+	m.recentSearches = []string{"frieren", "monster"}
+
+	if got := m.recentSearchAt(recentSearchesTop); got != 0 {
+		t.Fatalf("recentSearchAt(%d) = %d before the drawer opened, want 0", recentSearchesTop, got)
+	}
+	m.nav.overlay = true
+	if got := m.recentSearchAt(recentSearchesTop); got != -1 {
+		t.Errorf("recentSearchAt(%d) = %d with the drawer open, want -1", recentSearchesTop, got)
+	}
+}
