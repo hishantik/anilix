@@ -287,30 +287,33 @@ download_file() {
     curl -fSL "$url" -o "$output" -# 2>/dev/null &
     curl_pid=$!
 
-    # Animated progress bar
+    # Animated progress bar with spinner
     pct=0
+    i=0
     while kill -0 "$curl_pid" 2>/dev/null; do
-        draw_progress_bar "$pct"
+        frame=$(get_spinner_frame $i)
+        printf '\r  %b%b Downloading... %b%3d%%%b' "$C_PRIMARY" "$frame" "$C_PRIMARY" "$pct" "$C_RESET" >&2
+
         # Ease-in-out animation curve
         if [ "$pct" -lt 30 ]; then
-            pct=$((pct + 2))
-        elif [ "$pct" -lt 70 ]; then
             pct=$((pct + 3))
+        elif [ "$pct" -lt 70 ]; then
+            pct=$((pct + 4))
         elif [ "$pct" -lt 95 ]; then
             pct=$((pct + 1))
         else
             pct=$((pct + 1))
         fi
         [ "$pct" -gt 99 ] && pct=99
-        sleep 0.12
+        i=$((i + 1))
+        sleep 0.08
     done
 
     wait "$curl_pid"
     exit_code=$?
 
     # Complete the bar
-    draw_progress_bar 100
-    clear_line
+    printf '\r\033[K' >&2
 
     return $exit_code
 }
@@ -394,8 +397,8 @@ do_install() {
         info "Latest version: ${C_BOLD}${version}${C_RESET}"
     fi
 
-    printf "\n  %b%b Fetching %b%s%b for %b%s%b/%b%s%b...\n\n" \
-        "$C_PRIMARY" "$SPINNER_FRAMES" \
+    printf "\n  %bFetching%b %s%b for %b%s%b/%b%s%b...\n\n" \
+        "$C_PRIMARY" "$C_RESET" \
         "$C_BOLD" "$version" "$C_RESET" \
         "$C_PRIMARY" "$os" "$C_RESET" \
         "$C_TERTIARY" "$arch" "$C_RESET"
