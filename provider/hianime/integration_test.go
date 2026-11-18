@@ -1,6 +1,7 @@
 package hianime
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -53,6 +54,46 @@ func TestIntegration_Search(t *testing.T) {
 		if r.ShowID == "" || r.Name == "" {
 			t.Fatalf("incomplete result: %+v", r)
 		}
+	}
+}
+
+func TestIntegration_ShowMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	p := NewProvider()
+	results, err := p.Search("demon slayer")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	meta, err := p.ShowMetadata(ctx, results[0].ShowID, results[0].URL)
+	if err != nil {
+		t.Fatalf("ShowMetadata failed: %v", err)
+	}
+	if meta.Synopsis == "" {
+		t.Error("the show page came back without a synopsis")
+	}
+	if len(meta.Genres) == 0 {
+		t.Error("the show page came back without genres")
+	}
+	if meta.Type == "" {
+		t.Error("the show page came back without a format")
+	}
+	t.Logf("%q: type=%s rating=%s status=%s year=%d score=%.2f duration=%dm genres=%v studios=%v episodes=%d synopsis=%d chars",
+		results[0].Name, meta.Type, meta.Rating, meta.Status, meta.Year, meta.Score,
+		meta.Duration, meta.Genres, meta.Studios, meta.Episodes, len(meta.Synopsis))
+
+	// The second call is served from the provider cache, not the network.
+	cached, err := p.ShowMetadata(ctx, results[0].ShowID, results[0].URL)
+	if err != nil || cached != meta {
+		t.Errorf("the second call was not served from the cache: err=%v same=%v", err, cached == meta)
 	}
 }
 

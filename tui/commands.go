@@ -202,16 +202,17 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 		kitsuFallback[i] = a
 	}
 
-	// The provider's own search result is the last resort. The panels are
-	// built here, on the UI thread, so the background closure only reads
-	// immutable copies.
-	sourceFallback := make(map[int]*MetadataPanel)
+	// The provider's own pages are the last resort. Their metadata is
+	// fetched after the batch, and only for the entries the other tiers
+	// leave empty: each page is ~200KB. The search result is kept as the
+	// cheap fallback when the page fails or the cap is reached.
+	var sourceFallback []indexAnime
 	for i, r := range results {
 		if m.hasRealMetadata(i) {
 			continue
 		}
-		if panel := searchResultPanel(r); panel != nil {
-			sourceFallback[i] = panel
+		if searchResultPanel(r) != nil {
+			sourceFallback = append(sourceFallback, indexAnime{Index: i, Anime: r})
 		}
 	}
 
@@ -228,6 +229,7 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 
 	anilistClient := m.anilistClient
 	jikanClient := m.jikanClient
+	hianimeProvider := m.hianimeProvider
 	return func() tea.Msg {
 		resultMap := make(map[int]*MetadataPanel)
 
@@ -267,18 +269,66 @@ func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
 			}
 		}
 
-		// Nothing metadata-side knows the entry: show the provider's own
-		// poster and type rather than an empty panel.
-		for i, panel := range sourceFallback {
-			if _, ok := resultMap[i]; ok {
-				continue
+		// Nothing metadata-side knows the entry: the show page is the last
+		// source, and the search card is the fallback if it fails. The
+		// pages are a separate pass so the panels above are not held back.
+		pending := make([]indexAnime, 0, len(sourceFallback))
+		for _, f := range sourceFallback {
+			if _, ok := resultMap[f.Index]; !ok {
+				pending = append(pending, f)
 			}
-			resultMap[i] = panel
 		}
+		return MetadataBatchLoadedMsg{
+			MetadataMap: resultMap,
+			FollowUp:    showPagePanelsCmd(hianimeProvider, pending),
+		}
+	}
+}
 
+// indexAnime pairs a result index with the search result it came from.
+type indexAnime struct {
+	Index int
+	Anime *source.Anime
+}
+
+// showPagePanelsCmd fetches the hianime show pages of the entries no
+// metadata API knew. It runs after the metadata batch: the pages are the
+// provisional source, so they must not delay the real panels. Only a few
+// pages are fetched per search to keep an all-placeholder list from
+// downloading megabytes.
+func showPagePanelsCmd(p *hianime.Provider, pending []indexAnime) tea.Cmd {
+	if len(pending) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		resultMap := make(map[int]*MetadataPanel)
+		fetched := 0
+		for _, f := range pending {
+			var panel *MetadataPanel
+			if fetched < maxShowPageFetches {
+				fetched++
+				ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				meta, err := p.ShowMetadata(ctx, f.Anime.ShowID, f.Anime.URL)
+				cancel()
+				if err == nil && meta != nil {
+					panel = hianimeToPanel(f.Anime, meta)
+				}
+			}
+			if panel == nil {
+				panel = searchResultPanel(f.Anime)
+			}
+			if panel != nil {
+				resultMap[f.Index] = panel
+			}
+		}
 		return MetadataBatchLoadedMsg{MetadataMap: resultMap}
 	}
 }
+
+// maxShowPageFetches caps the number of hianime show pages fetched per
+// metadata batch. Each page is ~200KB, and a search whose entries no
+// metadata API knows is rare; the search card still covers the rest.
+const maxShowPageFetches = 5
 
 // hasRealMetadata reports whether the result has metadata from a source
 // richer than the hianime placeholder. The placeholder is provisional: the
@@ -333,6 +383,66 @@ func cleanFormat(t string) string {
 		t = t[:i]
 	}
 	return strings.TrimSpace(strings.ToUpper(t))
+}
+
+// hianimeToPanel builds the placeholder panel from a show page's detail
+// block, layering it over the search card. The page adds the synopsis,
+// genres, status, year and score that the search card does not carry;
+// the card still supplies the poster and the episode count.
+func hianimeToPanel(r *source.Anime, meta *hianime.ShowMetadata) *MetadataPanel {
+	panel := searchResultPanel(r)
+	if panel == nil {
+		if r == nil {
+			return nil
+		}
+		panel = &MetadataPanel{Title: r.Name}
+	}
+	if meta == nil {
+		return panel
+	}
+	panel.Source = "Hianime"
+	if meta.Synopsis != "" {
+		panel.Synopsis = meta.Synopsis
+	}
+	if meta.Japanese != "" {
+		panel.TitleNative = meta.Japanese
+	}
+	if meta.Score > 0 {
+		panel.Score = meta.Score
+	}
+	if len(meta.Genres) > 0 {
+		panel.Genres = meta.Genres
+	}
+	if meta.Status != "" {
+		panel.Status = hianimeStatus(meta.Status)
+	}
+	if panel.Year == 0 {
+		panel.Year = meta.Year
+	}
+	if panel.Type == "" {
+		panel.Type = cleanFormat(meta.Type)
+	}
+	if panel.Episodes == 0 {
+		panel.Episodes = meta.Episodes
+	}
+	return panel
+}
+
+// hianimeStatus maps the site's airing wording onto the words AniList uses,
+// so the panel language does not change with the source.
+func hianimeStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "finished airing":
+		return "FINISHED"
+	case "currently airing":
+		return "RELEASING"
+	case "not yet aired":
+		return "NOT_YET_RELEASED"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(strings.TrimSpace(status))
+	}
 }
 
 // kitsuToPanel builds a metadata panel from a Kitsu entry. Kitsu is the
@@ -512,8 +622,17 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 		}
 	}
 
+	// No id API matched the title: the provider's show page is the last
+	// source, and the plain search card is the fallback if it fails.
+	hianimeProvider := m.hianimeProvider
 	return func() tea.Msg {
-		return MetadataLoadedMsg{Metadata: fallback, Index: idx}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		meta, err := hianimeProvider.ShowMetadata(ctx, anime.ShowID, anime.URL)
+		cancel()
+		if err != nil || meta == nil {
+			return MetadataLoadedMsg{Metadata: fallback, Index: idx}
+		}
+		return MetadataLoadedMsg{Metadata: hianimeToPanel(anime, meta), Index: idx}
 	}
 }
 

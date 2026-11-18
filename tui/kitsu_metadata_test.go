@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/hishantik/anilix/provider/hianime"
 	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
 )
@@ -149,6 +150,97 @@ func TestHasRealMetadata(t *testing.T) {
 	for idx, want := range cases {
 		if got := m.hasRealMetadata(idx); got != want {
 			t.Errorf("hasRealMetadata(%d) = %v, want %v", idx, got, want)
+		}
+	}
+}
+
+func TestHianimeToPanelLayersTheShowPageOverTheCard(t *testing.T) {
+	r := &source.Anime{
+		ShowID:       "9999",
+		Name:         "Demon Slayer: Kimetsu no Yaiba Infinity Castle III",
+		Cover:        "https://cdn.example/poster.jpg",
+		Type:         "MOVIE (1 EPS)",
+		EpisodeCount: 1,
+		Year:         2027,
+	}
+	meta := &hianime.ShowMetadata{
+		Synopsis: "The final battle.",
+		Japanese: "鬼滅の刃",
+		Year:     2025,
+		Status:   "Finished Airing",
+		Score:    8.57,
+		Genres:   []string{"Action", "Fantasy"},
+		Type:     "MOVIE",
+		Episodes: 1,
+	}
+
+	panel := hianimeToPanel(r, meta)
+	if panel == nil {
+		t.Fatal("hianimeToPanel() = nil, want panel")
+	}
+	if panel.Title != r.Name {
+		t.Errorf("Title = %q, want the search card title %q", panel.Title, r.Name)
+	}
+	if panel.Cover != r.Cover {
+		t.Errorf("Cover = %q, want the search card cover", panel.Cover)
+	}
+	if panel.Synopsis != meta.Synopsis {
+		t.Errorf("Synopsis = %q, want the page synopsis", panel.Synopsis)
+	}
+	if panel.TitleNative != meta.Japanese {
+		t.Errorf("TitleNative = %q, want %q", panel.TitleNative, meta.Japanese)
+	}
+	if panel.Score != meta.Score {
+		t.Errorf("Score = %v, want %v", panel.Score, meta.Score)
+	}
+	if len(panel.Genres) != 2 || panel.Genres[0] != "Action" {
+		t.Errorf("Genres = %v", panel.Genres)
+	}
+	if panel.Status != "FINISHED" {
+		t.Errorf("Status = %q, want FINISHED", panel.Status)
+	}
+	if panel.Type != "MOVIE" {
+		t.Errorf("Type = %q, want MOVIE", panel.Type)
+	}
+	if panel.Episodes != 1 {
+		t.Errorf("Episodes = %d, want 1", panel.Episodes)
+	}
+	// The search card already knows the year: the page's premiere year
+	// must not overwrite it.
+	if panel.Year != 2027 {
+		t.Errorf("Year = %d, want the search card year 2027", panel.Year)
+	}
+	if panel.Source != "Hianime" {
+		t.Errorf("Source = %q, want Hianime", panel.Source)
+	}
+	if (&SearchModel{metadataCache: map[int]*MetadataPanel{0: panel}}).hasRealMetadata(0) {
+		t.Error("the hianime panel must stay provisional")
+	}
+}
+
+func TestHianimeToPanelFallsBackToTheCard(t *testing.T) {
+	r := &source.Anime{Name: "Some Unaired Film", Cover: "https://cdn.example/p.jpg", Type: "MOVIE"}
+
+	card := searchResultPanel(r)
+	if got := hianimeToPanel(r, nil); got == nil || got.Source != card.Source || got.Title != card.Title {
+		t.Errorf("hianimeToPanel(r, nil) = %+v, want the search card", got)
+	}
+	if got := hianimeToPanel(nil, nil); got != nil {
+		t.Errorf("hianimeToPanel(nil, nil) = %+v, want nil", got)
+	}
+}
+
+func TestHianimeStatus(t *testing.T) {
+	cases := map[string]string{
+		"Finished Airing":  "FINISHED",
+		"Currently Airing": "RELEASING",
+		"Not yet aired":    "NOT_YET_RELEASED",
+		"":                 "",
+		"Hiatus":           "HIATUS",
+	}
+	for in, want := range cases {
+		if got := hianimeStatus(in); got != want {
+			t.Errorf("hianimeStatus(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

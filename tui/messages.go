@@ -1,6 +1,8 @@
 package tui
 
 import (
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
 	"github.com/hishantik/anilix/provider/kitsu"
@@ -56,6 +58,11 @@ type MetadataLoadedMsg struct {
 // MetadataBatchLoadedMsg carries all metadata for a search result set.
 type MetadataBatchLoadedMsg struct {
 	MetadataMap map[int]*MetadataPanel
+	// FollowUp is the provisional pass that runs after this batch: the
+	// hianime show pages of the entries no metadata API knew. It is a
+	// second message so the real panels are not held back by the ~200KB
+	// pages.
+	FollowUp tea.Cmd
 }
 
 type EpisodesLoadedMsg struct {

@@ -20,9 +20,12 @@ type Provider struct {
 
 	// The episode list of a long series is over a megabyte and the server
 	// list is fetched again for every episode, so both are cached briefly.
+	// The detail block of a show page is a ~200KB page and is cached with
+	// the same lifetime.
 	cacheMu  sync.Mutex
 	episodes map[string]cachedEpisodes
 	servers  map[string]cachedServers
+	showMeta map[string]cachedShowMetadata
 }
 
 type cachedEpisodes struct {
@@ -46,6 +49,7 @@ func NewProvider() *Provider {
 		translation: "sub",
 		episodes:    make(map[string]cachedEpisodes),
 		servers:     make(map[string]cachedServers),
+		showMeta:    make(map[string]cachedShowMetadata),
 	}
 }
 

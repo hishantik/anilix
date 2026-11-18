@@ -167,6 +167,7 @@ func TestSearchMetadataCompleteLive(t *testing.T) {
 	m := &SearchModel{
 		anilistClient:   ac,
 		jikanClient:     jikan.NewClient("https://api.jikan.moe/v4"),
+		hianimeProvider: p,
 		metadataCache:   make(map[int]*MetadataPanel),
 		kitsuAnimeCache: make(map[int]*kitsu.Anime),
 	}
@@ -187,6 +188,19 @@ func TestSearchMetadataCompleteLive(t *testing.T) {
 	if !ok {
 		t.Fatal("fetchMetadataBatch returned an unexpected message")
 	}
+	// The show pages are the provisional follow-up pass: run it exactly as
+	// the Update loop does and merge what it brought.
+	if msg.FollowUp != nil {
+		placeholderMsg, ok := msg.FollowUp().(MetadataBatchLoadedMsg)
+		if !ok {
+			t.Fatal("the placeholder pass returned an unexpected message")
+		}
+		for i, panel := range placeholderMsg.MetadataMap {
+			if _, ok := msg.MetadataMap[i]; !ok {
+				msg.MetadataMap[i] = panel
+			}
+		}
+	}
 
 	real := 0
 	for i, r := range results {
@@ -200,6 +214,10 @@ func TestSearchMetadataCompleteLive(t *testing.T) {
 		}
 		if panel.Source != "Hianime" {
 			real++
+		} else if panel.Synopsis == "" {
+			// The placeholder pass reads the show page, so even an entry no
+			// metadata API knows has a synopsis, genres and status.
+			t.Errorf("result %d (%q) fell back to the bare search card", i, r.Name)
 		}
 	}
 	t.Logf("%d/%d results with real metadata", real, len(results))

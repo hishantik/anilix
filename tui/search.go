@@ -919,6 +919,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.searchState.MetadataLoading = false
 		}
+		// The provider pages are fetched after this batch: their panels
+		// are provisional and must not delay the real ones.
+		if msg.FollowUp != nil {
+			cmds = append(cmds, msg.FollowUp)
+		}
 		m.progressTarget = 1.0
 		// The rows carry the alternative title and the status of their
 		// entry: the list is rebuilt with what the batch brought.
