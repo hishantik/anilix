@@ -55,9 +55,26 @@ type MetadataLoadedMsg struct {
 	Index    int
 }
 
+// EpisodeTitlesLoadedMsg carries the Jikan episode titles fetched as the
+// follow-up of the episode list: the list renders first, the titles arrive
+// when they arrive.
+type EpisodeTitlesLoadedMsg struct {
+	Index  int
+	Titles []string
+}
+
+// MetadataProgressMsg carries the new progress target of a metadata tier:
+// the bar eases toward it while the next tier runs.
+type MetadataProgressMsg struct {
+	Target float64
+}
+
 // MetadataBatchLoadedMsg carries all metadata for a search result set.
 type MetadataBatchLoadedMsg struct {
 	MetadataMap map[int]*MetadataPanel
+	// Target is the progress the bar moves to when this batch lands. The
+	// follow-up show pages keep moving it to 1.0 afterwards.
+	Target float64
 	// FollowUp is the provisional pass that runs after this batch: the
 	// hianime show pages of the entries no metadata API knew. It is a
 	// second message so the real panels are not held back by the ~200KB
@@ -69,6 +86,9 @@ type EpisodesLoadedMsg struct {
 	Episodes      []string
 	EpisodeTitles []string
 	Error         error
+	// FollowUp fetches the Jikan episode titles while the episode list is
+	// rendering and the bar is at 0.7; it keeps the bar responsive.
+	FollowUp tea.Cmd
 }
 
 type EpisodeMetadataFetchTriggered struct {

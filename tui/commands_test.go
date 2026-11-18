@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/hianime"
 	"github.com/hishantik/anilix/provider/jikan"
@@ -184,9 +186,29 @@ func TestSearchMetadataCompleteLive(t *testing.T) {
 		}
 	}
 
-	msg, ok := m.fetchMetadataBatch(results)().(MetadataBatchLoadedMsg)
+	// The AniList tier reports its progress and hands the rest of the work
+	// to the tail command. The runtime auto-executes commands that come
+	// back as messages; the test does the same.
+	raw := m.fetchMetadataBatch(results)()
+	for {
+		cmd, ok := raw.(tea.Cmd)
+		if !ok {
+			break
+		}
+		raw = cmd()
+	}
+	if batch, ok := raw.(tea.BatchMsg); ok {
+		// The progress command lands first; the tail carries the panels.
+		for _, cmd := range batch {
+			if loaded, ok := cmd().(MetadataBatchLoadedMsg); ok {
+				raw = loaded
+				break
+			}
+		}
+	}
+	msg, ok := raw.(MetadataBatchLoadedMsg)
 	if !ok {
-		t.Fatal("fetchMetadataBatch returned an unexpected message")
+		t.Fatalf("fetchMetadataBatch returned %T, want MetadataBatchLoadedMsg", raw)
 	}
 	// The show pages are the provisional follow-up pass: run it exactly as
 	// the Update loop does and merge what it brought.

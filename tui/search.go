@@ -901,6 +901,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
 		}
 
+	case MetadataProgressMsg:
+		// A tier of the metadata batch is done: ease the bar toward the
+		// next target while the remaining tiers run.
+		m.progressTarget = msg.Target
+
 	case MetadataBatchLoadedMsg:
 		// Cache all metadata from the batch result; an entry already in
 		// the cache was richer (AniList/Jikan/Kitsu) and is not downgraded
@@ -930,7 +935,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.FollowUp != nil {
 			cmds = append(cmds, msg.FollowUp)
 		}
-		m.progressTarget = 1.0
+		m.progressTarget = msg.Target
 		// The rows carry the alternative title and the status of their
 		// entry: the list is rebuilt with what the batch brought.
 		m.updateSearchList()
@@ -972,9 +977,23 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.episodeState.Err = msg.Error
 		}
 		m.updateEpisodeList()
+		// The Jikan titles are the follow-up: they land while the bar runs
+		// to 0.7 and the selected episode's metadata loads.
+		if msg.FollowUp != nil {
+			cmds = append(cmds, msg.FollowUp)
+		}
 		if len(msg.Episodes) > 0 {
 			m.episodeState.MetadataLoading = true
 			cmds = append(cmds, m.fetchEpisodeMetadata())
+		}
+
+	case EpisodeTitlesLoadedMsg:
+		// A follow-up answer for another entry is dropped: the titles
+		// belong to the episode list the user is looking at.
+		if msg.Index == m.searchState.Selected && len(msg.Titles) > 0 {
+			m.episodeState.EpisodeTitles = msg.Titles
+			m.episodeTitlesCache[msg.Index] = msg.Titles
+			m.updateEpisodeList()
 		}
 
 	case episodeMetadataDebounceMsg:
