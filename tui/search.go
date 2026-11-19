@@ -613,6 +613,12 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmSelect = 0
 			case "right", "l":
 				m.confirmSelect = 1
+			case "up", "k", "down", "j", "tab":
+				if m.confirmSelect == 0 {
+					m.confirmSelect = 1
+				} else {
+					m.confirmSelect = 0
+				}
 			case "enter":
 				if m.confirmSelect == 0 {
 					return m, tea.Quit
