@@ -26,6 +26,10 @@ type Provider struct {
 	episodes map[string]cachedEpisodes
 	servers  map[string]cachedServers
 	showMeta map[string]cachedShowMetadata
+	// malIDs holds MAL ids recovered from embed URLs, keyed by show id.
+	// Written from Cmd goroutines, read from anywhere: guarded by cacheMu
+	// so the shared source.Anime structs are never mutated off the UI thread.
+	malIDs map[string]int
 }
 
 type cachedEpisodes struct {
@@ -49,6 +53,7 @@ func NewProvider() *Provider {
 		translation: "sub",
 		episodes:    make(map[string]cachedEpisodes),
 		servers:     make(map[string]cachedServers),
+		malIDs:      make(map[string]int),
 		showMeta:    make(map[string]cachedShowMetadata),
 	}
 }
@@ -58,11 +63,23 @@ func (p *Provider) ID() string   { return "hianime" }
 
 // SetTranslation switches between "sub" and "dub" playback.
 func (p *Provider) SetTranslation(t string) {
+	// Written from UI goroutines and read from Cmd goroutines.
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
 	if t == "dub" {
 		p.translation = "dub"
 	} else {
 		p.translation = "sub"
 	}
+}
+
+func (p *Provider) translationType() string {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	if p.translation == "" {
+		return "sub"
+	}
+	return p.translation
 }
 
 // episodeEntries returns the episode list of a show, using the cache when it
@@ -169,13 +186,27 @@ func (p *Provider) EpisodesOf(anime *source.Anime, season int) ([]*source.Episod
 		})
 	}
 
-	if anime.MALID == 0 && len(entries) > 0 {
+	// Recover the MAL id from the embed URL for AniSkip: stored in the
+	// provider's guarded map; the TUI picks it up via MALIDFromEmbed.
+	if _, ok := p.malIDs[anime.ShowID]; !ok && len(entries) > 0 {
 		if malID := p.resolveMALID(ctx, entries[0].DataID); malID > 0 {
-			anime.MALID = malID
+			p.cacheMu.Lock()
+			if _, ok := p.malIDs[anime.ShowID]; !ok {
+				p.malIDs[anime.ShowID] = malID
+			}
+			p.cacheMu.Unlock()
 		}
 	}
 
 	return episodes, nil
+}
+
+// MALIDFromEmbed returns the MAL id recovered from an episode's embed URL
+// for a show, or 0. EpisodesOf/StreamsOf record it there as a side effect.
+func (p *Provider) MALIDFromEmbed(showID string) int {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	return p.malIDs[showID]
 }
 
 // resolveMALID extracts the MAL id from an embed URL. Only some embeds carry
@@ -185,7 +216,7 @@ func (p *Provider) resolveMALID(ctx context.Context, epDataID string) int {
 	if err != nil {
 		return 0
 	}
-	for _, c := range rankEmbeds(cands, p.translation) {
+	for _, c := range rankEmbeds(cands, p.translationType()) {
 		if id := malIDFromEmbed(c.Embed); id > 0 {
 			return id
 		}
@@ -229,15 +260,20 @@ func (p *Provider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) 
 	// names and player formats change, and a CDN can be down (e.g. a 525
 	// from Zoko while MegaPlay works), so every candidate is fully resolved
 	// - config, playlist, variants - before it is accepted.
-	cands := rankEmbeds(cands0, p.translation)
+	cands := rankEmbeds(cands0, p.translationType())
 	var lastErr error
 	for _, c := range cands {
 		streams, err := p.streamsFromEmbed(ctx, c.Embed)
 		if err == nil {
-			// Enrich MALID for AniSkip if the TUI doesn't have it yet.
-			if episode.Anime.MALID == 0 {
+			// Recover MALID for AniSkip if the TUI doesn't have it yet: stored
+			// in the guarded map, never written onto the shared anime struct.
+			if _, ok := p.malIDs[episode.Anime.ShowID]; !ok {
 				if malID := malIDFromEmbed(c.Embed); malID > 0 {
-					episode.Anime.MALID = malID
+					p.cacheMu.Lock()
+					if _, ok := p.malIDs[episode.Anime.ShowID]; !ok {
+						p.malIDs[episode.Anime.ShowID] = malID
+					}
+					p.cacheMu.Unlock()
 				}
 			}
 			return streams, nil

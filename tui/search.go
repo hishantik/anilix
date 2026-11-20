@@ -902,15 +902,25 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateSearchList()
 
 	case IDsResolvedMsg:
-		// IDs are filled in place; now the metadata batch can run.
-		m.searchState.Results = msg.Results
-		if len(msg.Results) > 0 {
+		// Apply the AniList ids on the UI thread (the resolver goroutine
+		// must not mutate the results the renderer reads), then the
+		// metadata batch can run.
+		for idx, ids := range msg.IDs {
+			if idx < 0 || idx >= len(m.searchState.Results) {
+				continue
+			}
+			m.searchState.Results[idx].AniListID = ids.AniListID
+			if ids.MALID > 0 {
+				m.searchState.Results[idx].MALID = ids.MALID
+			}
+		}
+		if len(m.searchState.Results) > 0 {
 			m.searchState.MetadataLoading = true
 			m.loading = spinner.New()
 			m.loading.Spinner = spinner.Points
 			m.loading.Style = theme.Fg(lipgloss.NewStyle(), theme.Primary)
 			cmds = append(cmds, m.loading.Tick)
-			cmds = append(cmds, m.fetchMetadataBatch(msg.Results))
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
 		}
 
 	case MALIDsResolvedMsg:
@@ -1016,6 +1026,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressTarget = 0.7 // episodes loaded, metadata still loading
 		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
+		// The provider recovered the MAL id from an embed URL during the
+		// episodes fetch; apply it on the UI thread (AniSkip reads it).
+		if msg.MALID > 0 && m.searchState.Selected < len(m.searchState.Results) {
+			anime := m.searchState.Results[m.searchState.Selected]
+			if anime != nil && anime.MALID == 0 {
+				anime.MALID = msg.MALID
+			}
+		}
 		if msg.Error != nil {
 			m.episodeState.Err = msg.Error
 		}

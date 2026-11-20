@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -194,8 +195,13 @@ func (c *Client) GetAnimeBatch(ctx context.Context, ids []int) (map[int]*MediaDa
 	}
 
 	resp, err := c.doGraphQL(ctx, query, variables)
-	if err != nil {
+	if resp == nil && err != nil {
 		return results, err
+	}
+	// A GraphQL partial error keeps going: the aliases that succeeded are
+	// still decoded into results; err is reported for logging.
+	if err != nil {
+		log.Printf("[anilix] batch partial error: %v\n", err)
 	}
 
 	var rawResp map[string]interface{}
@@ -273,8 +279,12 @@ func (c *Client) resolveTitleChunk(ctx context.Context, titles []string) ([]Titl
 	query := fmt.Sprintf("query (%s) { %s }", strings.Join(varParts, ", "), strings.Join(queryParts, " "))
 
 	resp, err := c.doGraphQL(ctx, query, variables)
-	if err != nil {
+	if resp == nil && err != nil {
 		return nil, err
+	}
+	if err != nil {
+		// Partial data: aliases that succeeded are decoded below.
+		log.Printf("[anilix] title chunk partial error: %v\n", err)
 	}
 
 	var rawResp map[string]interface{}
@@ -500,8 +510,15 @@ func (c *Client) doGraphQLCurl(ctx context.Context, reqBody []byte) ([]byte, err
 		return nil, fmt.Errorf("failed to parse curl response: %w", err)
 	}
 
+	// GraphQL partial responses: AniList returns per-field errors with the
+	// remaining data intact (e.g. one bad alias in a batch of ten). The
+	// callers decode the aliased maps themselves, so the partial data is
+	// returned and the error reported alongside it.
 	if len(result.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL error: %s", result.Errors[0].Message)
+		if result.Data == nil {
+			return nil, fmt.Errorf("GraphQL error: %s", result.Errors[0].Message)
+		}
+		return result.Data, fmt.Errorf("GraphQL error (partial data kept): %s", result.Errors[0].Message)
 	}
 
 	return result.Data, nil

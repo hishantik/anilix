@@ -44,8 +44,7 @@ func (m *SearchModel) resolveIDs(results []*source.Anime) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		resolveAnimeIDs(ctx, anilistClient, results)
-		return IDsResolvedMsg{Results: results}
+		return IDsResolvedMsg{IDs: resolveAnimeIDs(ctx, anilistClient, results)}
 	}
 }
 
@@ -97,10 +96,12 @@ func (m *SearchModel) resolveIDsViaKitsu(results []*source.Anime) tea.Cmd {
 // AniList is the primary metadata provider: hianime gives no AniList ID, so
 // titles are matched against AniList, which also returns the MAL ID used for
 // AniSkip. Matching is exact-after-normalization, never fuzzy, because a
-// near-match would attach the wrong anime.
-func resolveAnimeIDs(ctx context.Context, anilistClient *anilist.Client, results []*source.Anime) {
+// near-match would attach the wrong anime. The ids are returned keyed by
+// result index — the caller applies them on the UI thread rather than the
+// goroutine mutating the results it shares with the renderer.
+func resolveAnimeIDs(ctx context.Context, anilistClient *anilist.Client, results []*source.Anime) map[int]ExternalIDs {
 	if len(results) == 0 || anilistClient == nil {
-		return
+		return nil
 	}
 
 	titles := make([]string, 0, len(results))
@@ -111,17 +112,16 @@ func resolveAnimeIDs(ctx context.Context, anilistClient *anilist.Client, results
 	matches, err := anilistClient.ResolveByTitles(ctx, titles)
 	if err != nil {
 		log.Printf("[anilix] anilist id resolution failed: %v\n", err)
-		return
+		return nil
 	}
+	ids := make(map[int]ExternalIDs, len(matches))
 	for i, m := range matches {
 		if m.Media == nil || i >= len(results) {
 			continue
 		}
-		results[i].AniListID = m.Media.ID
-		if m.Media.IDMal > 0 {
-			results[i].MALID = m.Media.IDMal
-		}
+		ids[i] = ExternalIDs{AniListID: m.Media.ID, MALID: m.Media.IDMal}
 	}
+	return ids
 }
 
 // anyMissingMAL reports whether some result still lacks a MAL ID.
@@ -790,6 +790,12 @@ func (m *SearchModel) fetchEpisodesHianime(anime *source.Anime, translationType 
 		if err != nil {
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
+		// The provider may have recovered the MAL id from an embed URL
+		// during this call; the guarded map is safe to read from this
+		// goroutine and the value feeds the Jikan titles fetch below.
+		if malID == 0 {
+			malID = hianimeProvider.MALIDFromEmbed(anime.ShowID)
+		}
 
 		epList := make([]string, 0, len(eps))
 		for _, ep := range eps {
@@ -824,6 +830,7 @@ func (m *SearchModel) fetchEpisodesHianime(anime *source.Anime, translationType 
 			Episodes:      epList,
 			EpisodeTitles: titles,
 			Error:         nil,
+			MALID:         malID,
 			FollowUp:      titleFetch,
 		}
 	}

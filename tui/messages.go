@@ -13,10 +13,10 @@ type SearchResultsMsg struct {
 	Results []*source.Anime
 }
 
-// IDsResolvedMsg carries search results whose AniList/MAL IDs have been
-// resolved in the background.
+// IDsResolvedMsg carries the AniList/MAL ids resolved in the background,
+// keyed by result index, for the UI thread to apply.
 type IDsResolvedMsg struct {
-	Results []*source.Anime
+	IDs map[int]ExternalIDs
 }
 
 // MALIDsResolvedMsg carries the external IDs Kitsu resolved for search
@@ -86,6 +86,9 @@ type EpisodesLoadedMsg struct {
 	Episodes      []string
 	EpisodeTitles []string
 	Error         error
+	// MALID is the id the provider recovered from an embed URL while
+	// listing episodes, 0 when it found none; applied on the UI thread.
+	MALID int
 	// FollowUp fetches the Jikan episode titles while the episode list is
 	// rendering and the bar is at 0.7; it keeps the bar responsive.
 	FollowUp tea.Cmd

@@ -244,6 +244,11 @@ func (c *JikanClient) GetEpisodes(ctx context.Context, malID int) ([]Episode, er
 
 // GetEpisode fetches a single episode by MAL ID and episode number
 func (c *JikanClient) GetEpisode(ctx context.Context, malID int, episodeNumber int) (*Episode, error) {
+	// Same circuit breaker as every other call: Jikan goes down for hours
+	// at a time and one dead endpoint must not stall playback.
+	if c.IsDown() {
+		return nil, fmt.Errorf("jikan api unreachable (recent failure), skipping")
+	}
 	c.rateLimiter.waitForToken()
 
 	url := fmt.Sprintf("%s/anime/%d/episodes/%d", c.baseURL, malID, episodeNumber)
@@ -255,8 +260,10 @@ func (c *JikanClient) GetEpisode(ctx context.Context, malID int, episodeNumber i
 
 	response, err := curl.Get(ctx, url, headers)
 	if err != nil {
+		c.markDown()
 		return nil, fmt.Errorf("curl failed: %w", err)
 	}
+	c.markUp()
 
 	var result EpisodeSingleResponse
 	if err := json.Unmarshal([]byte(response), &result); err != nil {

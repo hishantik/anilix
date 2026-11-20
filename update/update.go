@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/hishantik/anilix/curl"
@@ -56,10 +57,60 @@ func CheckForUpdate(ctx context.Context) (*ReleaseInfo, error) {
 }
 
 // IsUpdateAvailable compares the current version with the latest tag.
+// Numeric-aware semver comparison: a string equality check marked every
+// dev build and every v2.0-vs-v2.0.0 pair as outdated forever.
 func IsUpdateAvailable(currentVersion, latestTag string) bool {
-	current := strings.TrimPrefix(currentVersion, "v")
-	latest := strings.TrimPrefix(latestTag, "v")
-	return current != latest
+	return compareVersions(currentVersion, latestTag) < 0
+}
+
+// compareVersions parses "v1.2.3" into numeric parts and compares them.
+// Non-numeric parts (e.g. "dev") compare as unknown: -2 sorts below any
+// release so dev builds are treated as older, matching the old intent
+// (a dev build should update) without mismatch spam between formats.
+func compareVersions(a, b string) int {
+	pa, oka := versionParts(a)
+	pb, okb := versionParts(b)
+	if !oka && !okb {
+		return 0 // dev vs dev, or dev vs unknown: no update prompt
+	}
+	if !oka {
+		return -2
+	}
+	if !okb {
+		return 2
+	}
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			if pa[i] < pb[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// versionParts returns [major, minor, patch] and whether the string looked
+// like a version at all.
+func versionParts(v string) ([3]int, bool) {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.Split(v, ".")
+	var nums [3]int
+	if len(parts) == 0 || parts[0] == "" {
+		return nums, false
+	}
+	ok := true
+	for i := 0; i < 3; i++ {
+		if i < len(parts) {
+			n, err := strconv.Atoi(parts[i])
+			if err != nil {
+				ok = false
+				break
+			}
+			nums[i] = n
+		}
+	}
+	return nums, ok
 }
 
 // PerformUpdate downloads and installs the latest release binary.
