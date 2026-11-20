@@ -311,10 +311,8 @@ func (p *Provider) lookupDataID(ctx context.Context, episode *source.Episode) (s
 			return e.DataID, nil
 		}
 	}
-	// Fall back to the first episode if the exact number is absent.
-	if len(entries) > 0 {
-		return entries[0].DataID, nil
-	}
+	// No fallback to entries[0]: playing episode 1 when the user picked
+	// 12.5 or a special is worse than a clear error.
 	return "", fmt.Errorf("episode %s not found on hianime", want)
 }
 

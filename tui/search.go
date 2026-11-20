@@ -1191,6 +1191,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.settingsState.UpdateStatus = "updated"
 		}
 
+	case SearchErrorMsg:
+		// The search failed: stop the spinner and show the error panel
+		// the view already renders for searchState.Err. Without this
+		// case the message was dropped and the UI spun forever.
+		m.searchState.Loading = false
+		m.progressTarget = 0
+		m.progress = newProgress()
+		m.progress.SetWidth(m.width)
+		m.searchState.Err = msg.Err
+
 	case TUIErrorMsg:
 		m.episodeState.Playing = false
 		m.progressPercent = 1.0

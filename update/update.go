@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -104,6 +105,12 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 		return fmt.Errorf("download failed: %s: %w", string(output), err)
 	}
 
+	// Verify the archive against the release's checksums.txt before it is
+	// ever executed: a tampered release must not install.
+	if err := verifyChecksum(ctx, tmpDir, release.TagName, assetName, archivePath); err != nil {
+		return err
+	}
+
 	// Extract binary from archive
 	binaryName := "anilix"
 	if runtime.GOOS == "windows" {
@@ -145,6 +152,50 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 	}
 
 	return nil
+}
+
+// verifyChecksum downloads the release's checksums.txt and compares the
+// sha256 of the downloaded archive against it.
+func verifyChecksum(ctx context.Context, tmpDir, tag, assetName, archivePath string) error {
+	sumsURL := baseURL + "/download/" + tag + "/checksums.txt"
+	sumsPath := filepath.Join(tmpDir, "checksums.txt")
+	sumCmd := exec.CommandContext(ctx, "curl", "-fsSL", "-o", sumsPath, sumsURL)
+	if output, err := sumCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("checksum download failed: %s: %w", string(output), err)
+	}
+
+	want, err := sha256Of(sumsPath, assetName)
+	if err != nil {
+		return fmt.Errorf("no checksum for %s: %w", assetName, err)
+	}
+
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		return err
+	}
+	got := sha256.Sum256(data)
+	if got != want {
+		return fmt.Errorf("checksum mismatch for %s: update aborted", assetName)
+	}
+	return nil
+}
+
+// sha256Of returns the recorded sha256 of name from a checksums.txt file.
+func sha256Of(sumsPath, name string) ([32]byte, error) {
+	data, err := os.ReadFile(sumsPath)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && filepath.Base(fields[1]) == name {
+			var sum [32]byte
+			if _, err := fmt.Sscanf(fields[0], "%x", &sum); err == nil {
+				return sum, nil
+			}
+		}
+	}
+	return [32]byte{}, fmt.Errorf("not listed in checksums.txt")
 }
 
 func copyFile(src, dst string) error {

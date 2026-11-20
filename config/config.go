@@ -21,10 +21,20 @@ func Setup() error {
 	setEnvs()
 	setDefaults()
 	setPaths()
+	// The config holds the AniList OAuth token: only the owner may read it.
+	v.SetConfigPermissions(0600)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return err
+		}
+	}
+
+	// Viper applies the mode only on create: an existing 0644 file from an
+	// older version keeps its loose permissions until chmod'ed here.
+	if path := v.ConfigFileUsed(); path != "" {
+		if err := os.Chmod(path, 0600); err != nil && !os.IsNotExist(err) {
+			log.Printf("[anilix] failed to tighten config permissions: %v\n", err)
 		}
 	}
 
@@ -67,7 +77,7 @@ func setPaths() {
 	configDir := filepath.Join(home, "."+AppName)
 	v.AddConfigPath(configDir)
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		log.Printf("[anilix] failed to create config dir: %v\n", err)
 	}
 }
@@ -97,7 +107,7 @@ func Save() {
 		return
 	}
 	dir := filepath.Join(home, "."+AppName)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		log.Printf("[anilix] failed to create config dir: %v\n", err)
 		return
 	}

@@ -1,12 +1,31 @@
 package hianime
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/hishantik/anilix/source"
 )
 
 var _ source.Source = (*Provider)(nil)
+
+// A missing episode number must error, not silently play episode 1.
+func TestLookupDataIDMissingEpisode(t *testing.T) {
+	p := NewProvider()
+	p.episodes["999"] = cachedEpisodes{
+		entries: []EpisodeEntry{{Number: "1", DataID: "d1"}, {Number: "2", DataID: "d2"}},
+		fetched: time.Now(),
+	}
+
+	got, err := p.lookupDataID(context.Background(), &source.Episode{
+		Anime:  &source.Anime{ShowID: "999"},
+		Number: 12.5,
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing episode 12.5, got data-id %q", got)
+	}
+}
 
 func TestParseSearchResults(t *testing.T) {
 	// Mirrors the real search page: a results grid of <div class="flw-item">
