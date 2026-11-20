@@ -45,7 +45,38 @@ type cachedServers struct {
 const (
 	episodeCacheTTL = 30 * time.Minute
 	serverCacheTTL  = 10 * time.Minute
+	// Caps per map: a marathon session visiting dozens of shows would
+	// otherwise grow them without limit (episode lists are >1MB each).
+	episodeCacheMax = 8
+	serverCacheMax  = 64
+	showMetaMax     = 16
 )
+
+// trimCacheLocked evicts expired entries, then oldest-first down to max.
+// Caller holds cacheMu. get serves the entry; set deletes.
+func trimCacheLocked[K any](m map[string]K, max int, ttl time.Duration, served func(K) time.Time) {
+	now := time.Now()
+	for id, c := range m {
+		if now.Sub(served(c)) > ttl {
+			delete(m, id)
+		}
+	}
+	if len(m) <= max {
+		return
+	}
+	type kv struct {
+		k string
+		t time.Time
+	}
+	entries := make([]kv, 0, len(m))
+	for k, c := range m {
+		entries = append(entries, kv{k, served(c)})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].t.Before(entries[j].t) })
+	for i := 0; i < len(entries)-max; i++ {
+		delete(m, entries[i].k)
+	}
+}
 
 // NewProvider creates a hianime provider with the default translation type.
 func NewProvider() *Provider {
@@ -99,6 +130,7 @@ func (p *Provider) episodeEntries(ctx context.Context, showID string) ([]Episode
 
 	p.cacheMu.Lock()
 	p.episodes[showID] = cachedEpisodes{entries: entries, fetched: time.Now()}
+	trimCacheLocked(p.episodes, episodeCacheMax, episodeCacheTTL, func(c cachedEpisodes) time.Time { return c.fetched })
 	p.cacheMu.Unlock()
 	return entries, nil
 }
@@ -120,6 +152,7 @@ func (p *Provider) serverCandidates(ctx context.Context, epDataID string) ([]Emb
 
 	p.cacheMu.Lock()
 	p.servers[epDataID] = cachedServers{candidates: cands, fetched: time.Now()}
+	trimCacheLocked(p.servers, serverCacheMax, serverCacheTTL, func(c cachedServers) time.Time { return c.fetched })
 	p.cacheMu.Unlock()
 	return cands, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -51,6 +52,31 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		plCache   = map[string]plEntry{}
 	)
 
+	// Host allowlist: ?u= may only fetch hosts that belong to this
+	// playback — the master playlist's host plus hosts seen in playlists
+	// we rewrote. Anything else gets 403, so the proxy is not a localhost
+	// fetch oracle for arbitrary URLs.
+	var (
+		allowMu      sync.Mutex
+		allowedHosts = map[string]bool{}
+	)
+	if parsed, err := url.Parse(remoteURL); err == nil && parsed.Host != "" {
+		allowedHosts[parsed.Host] = true
+	}
+	allowHost := func(host string) {
+		if host == "" {
+			return
+		}
+		allowMu.Lock()
+		allowedHosts[host] = true
+		allowMu.Unlock()
+	}
+	hostAllowed := func(host string) bool {
+		allowMu.Lock()
+		defer allowMu.Unlock()
+		return allowedHosts[host]
+	}
+
 	// readIfPlaylist decides by content whether a response is an m3u8
 	// playlist. The caller passes a bufio.Reader it keeps using afterwards,
 	// so peeked bytes are preserved for the segment path.
@@ -71,9 +97,16 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 		defer cancel()
 
-		// ?u= param lets m3u8 segment/playlist URLs route through us
+		// ?u= param lets m3u8 segment/playlist URLs route through us —
+		// only for hosts this playback already touched (see allowlist).
 		targetURL := remoteURL
 		if u := r.URL.Query().Get("u"); u != "" {
+			parsed, err := url.Parse(u)
+			if err != nil || parsed.Host == "" || !hostAllowed(parsed.Host) {
+				fmt.Fprintf(os.Stderr, "[anilix-proxy] blocked cross-host fetch: %v\n", u)
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
 			targetURL = u
 		}
 
@@ -130,6 +163,23 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 					targetBase = parsed
 				}
 				rewritten := rewritePlaylist(string(pl), localURL, targetBase)
+
+				// The rewritten playlist routes its segment/variant URLs
+				// back through us: admit their hosts before serving.
+				if parsed, err := url.Parse(targetURL); err == nil {
+					allowHost(parsed.Host)
+				}
+				for _, line := range strings.Split(rewritten, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" || strings.HasPrefix(line, "#") {
+						continue
+					}
+					if q, err := url.QueryUnescape(strings.TrimPrefix(line, localURL+"?u=")); err == nil {
+						if parsed, err := url.Parse(q); err == nil {
+							allowHost(parsed.Host)
+						}
+					}
+				}
 				data := []byte(rewritten)
 
 				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
@@ -138,6 +188,21 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 				w.WriteHeader(resp.StatusCode)
 
 				plCacheMu.Lock()
+				// Cap the cache: a live stream cycles unique playlist
+				// URLs and would otherwise grow it without limit.
+				if len(plCache) >= 64 {
+					for k := range plCache {
+						if time.Now().After(plCache[k].expiresAt) {
+							delete(plCache, k)
+						}
+					}
+					if len(plCache) >= 64 {
+						for k := range plCache {
+							delete(plCache, k)
+							break
+						}
+					}
+				}
 				plCache[targetURL] = plEntry{data: data, expiresAt: time.Now().Add(2 * time.Second)}
 				plCacheMu.Unlock()
 
@@ -172,7 +237,11 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		w.WriteHeader(resp.StatusCode)
 
 		bw := bufio.NewWriterSize(w, 256*1024)
-		io.Copy(bw, body)
+		if _, err := io.Copy(bw, body); err != nil {
+			// Headers are already sent; log only. A truncated segment is
+			// a playback glitch worth a diagnostic.
+			fmt.Fprintf(os.Stderr, "[anilix-proxy] segment copy failed: %v\n", err)
+		}
 		bw.Flush()
 	})
 
@@ -379,13 +448,15 @@ func dnsQueryServer(ctx context.Context, server string, query []byte) (net.IP, e
 	if err != nil {
 		return nil, err
 	}
-	return parseDNSResponse(buf[:n])
+	return parseDNSResponse(buf[:n], query[0:2])
 }
 
 func buildDNSQuery(host string) []byte {
-	// Header: ID=0x1234, flags=standard query, 1 question, 0 answers
+	// Header: random ID (a fixed one is spoofable), flags=standard query, 1 question
 	var msg []byte
-	msg = append(msg, 0x12, 0x34) // ID
+	id := make([]byte, 2)
+	rand.Read(id)
+	msg = append(msg, id...)
 	msg = append(msg, 0x01, 0x00) // flags: standard query, recursion desired
 	msg = append(msg, 0x00, 0x01) // 1 question
 	msg = append(msg, 0x00, 0x00) // 0 answers
@@ -404,9 +475,17 @@ func buildDNSQuery(host string) []byte {
 	return msg
 }
 
-func parseDNSResponse(buf []byte) (net.IP, error) {
+func parseDNSResponse(buf, txID []byte) (net.IP, error) {
 	if len(buf) < 12 {
 		return nil, fmt.Errorf("dns response too short")
+	}
+	// The response must echo our transaction ID and report success:
+	// without this, a spoofed reply on a shared NAT pins the host.
+	if buf[0] != txID[0] || buf[1] != txID[1] {
+		return nil, fmt.Errorf("dns: transaction id mismatch")
+	}
+	if rcode := buf[3] & 0x0F; rcode != 0 {
+		return nil, fmt.Errorf("dns: server error rcode=%d", rcode)
 	}
 	// Skip header (12 bytes), skip question section
 	qdCount := int(buf[4])<<8 | int(buf[5])

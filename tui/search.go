@@ -1068,6 +1068,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EpisodeMetadataLoadedMsg:
 		if msg.CacheKey != "" && msg.RawEpisode != nil {
 			m.episodeMetadataCache[msg.CacheKey] = msg.RawEpisode
+			// Unbounded otherwise: every episode of every show adds a key.
+			if len(m.episodeMetadataCache) > 256 {
+				for k := range m.episodeMetadataCache {
+					delete(m.episodeMetadataCache, k)
+					break
+				}
+			}
 		}
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.EpisodeMetadata = msg.Metadata

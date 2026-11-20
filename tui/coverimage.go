@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -88,6 +90,33 @@ func coverCachePath(url string) string {
 	return filepath.Join(dir, hex.EncodeToString(hash[:8])+ext)
 }
 
+// trimCoverCache keeps the cover disk cache under ~200 files, oldest first.
+func trimCoverCache() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, ".anilix", "cache", "covers")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) <= 200 {
+		return
+	}
+	type df struct {
+		name string
+		mod  time.Time
+	}
+	files := make([]df, 0, len(entries))
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			files = append(files, df{e.Name(), info.ModTime()})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
+	for i := 0; i < len(files)-200; i++ {
+		os.Remove(filepath.Join(dir, files[i].name))
+	}
+}
+
 // DownloadCoverImage downloads an image from a URL and returns both the decoded image
 // and the local cache file path.
 func DownloadCoverImage(url string) (image.Image, string, error) {
@@ -108,6 +137,9 @@ func DownloadCoverImage(url string) (image.Image, string, error) {
 
 	// Save to cache
 	os.WriteFile(cachePath, data, 0o644)
+	// The disk cache is unbounded otherwise: cheap sweep, rare enough not
+	// to matter, and each file is small.
+	trimCoverCache()
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {

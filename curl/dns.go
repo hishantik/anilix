@@ -2,6 +2,7 @@ package curl
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net"
 	"net/url"
@@ -103,13 +104,15 @@ func dnsQueryServer(ctx context.Context, server string, query []byte) (net.IP, e
 	if err != nil {
 		return nil, err
 	}
-	return parseDNSResponse(buf[:n])
+	return parseDNSResponse(buf[:n], query[0:2])
 }
 
 func buildDNSQuery(host string) []byte {
-	// Header: ID=0x1234, flags=standard query, 1 question
+	// Header: random ID (a fixed one is spoofable), flags=standard query, 1 question
 	var msg []byte
-	msg = append(msg, 0x12, 0x34) // ID
+	id := make([]byte, 2)
+	rand.Read(id)
+	msg = append(msg, id...)
 	msg = append(msg, 0x01, 0x00) // flags: standard query, recursion desired
 	msg = append(msg, 0x00, 0x01) // 1 question
 	msg = append(msg, 0x00, 0x00) // 0 answers
@@ -127,9 +130,17 @@ func buildDNSQuery(host string) []byte {
 	return msg
 }
 
-func parseDNSResponse(buf []byte) (net.IP, error) {
+func parseDNSResponse(buf, txID []byte) (net.IP, error) {
 	if len(buf) < 12 {
 		return nil, fmt.Errorf("dns response too short")
+	}
+	// The response must echo our transaction ID and report success:
+	// without this, a spoofed reply on a shared NAT pins the host.
+	if buf[0] != txID[0] || buf[1] != txID[1] {
+		return nil, fmt.Errorf("dns: transaction id mismatch")
+	}
+	if rcode := buf[3] & 0x0F; rcode != 0 {
+		return nil, fmt.Errorf("dns: server error rcode=%d", rcode)
 	}
 	qdCount := int(buf[4])<<8 | int(buf[5])
 	anCount := int(buf[6])<<8 | int(buf[7])

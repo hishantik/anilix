@@ -70,6 +70,7 @@ func (p *Provider) ShowMetadata(ctx context.Context, showID, pageURL string) (*S
 
 	p.cacheMu.Lock()
 	p.showMeta[key] = cachedShowMetadata{meta: meta, fetched: time.Now()}
+	trimCacheLocked(p.showMeta, showMetaMax, episodeCacheTTL, func(c cachedShowMetadata) time.Time { return c.fetched })
 	p.cacheMu.Unlock()
 	return meta, nil
 }
