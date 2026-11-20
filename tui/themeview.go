@@ -315,7 +315,7 @@ func themeShowcaseLines() []string {
 	blank()
 
 	add(theme.Overline.RenderUpper("Key hints"))
-	add("  " + ui.KeyHint("enter", "play") + "   " + ui.KeyHint("esc", "back") + "   " + ui.KeyHint("ctrl+t", "sub/dub"))
+	add("  " + ui.KeyHint("enter", "play") + "   " + ui.KeyHint("esc", "back") + "   " + ui.KeyHint("tab", "sub/dub"))
 	add(theme.Caption.Render("  Renders exactly like the application screens."))
 
 	return lines

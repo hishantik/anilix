@@ -308,6 +308,10 @@ disappears moves everything else. Disabled controls stay in place, dimmed.
 
 - One row tall. An outlined button draws left and right rules only — a full
   box would need three rows and break inline layout.
+- A focused button carries the `▌` selection bar in front of it. An inline
+  button has no room for a border ring, and the focused accent shade is too
+  close to the hovered one to read as a cursor on its own, so the focus is
+  a shape rather than a tint.
 - Exactly one `filled` button per screen or dialog.
 - Destructive actions use `text` or `outlined` with the `error` role, never a
   filled accent.
@@ -352,6 +356,10 @@ badge shows a count in parentheses.
 
 Elevated container with a headline, body and a row of actions. Width is the
 outer width and is clamped to the terminal.
+
+A binary confirmation renders its two actions as one segmented switch — the
+same pill switch as the app bar's SUB/DUB: the labels keep their fixed order
+and only the fill moves. The filled segment is the action a bare enter runs.
 
 ### 8.8 Input field
 

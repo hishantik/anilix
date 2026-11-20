@@ -79,22 +79,36 @@ type Button struct {
 }
 
 // Render renders the button.
+//
+// A focused button carries the selection bar in front of it. The bar is a
+// shape, not a tint: a filled button is already the accent colour, so a
+// focus expressed with colour alone would be invisible next to its hover
+// state, and a text button's focus would vanish on terminals that quantise
+// the two accent shades to the same palette entry. The bar is added outside
+// the button width, so the label itself never moves.
 func (b Button) Render() string {
 	label := b.Label
 	if b.Icon != "" {
 		label = b.Icon + " " + label
 	}
 
+	var out string
 	switch b.Variant {
 	case ButtonFilled:
-		return b.renderFilled(label)
+		out = b.renderFilled(label)
 	case ButtonTonal:
-		return b.renderTonal(label)
+		out = b.renderTonal(label)
 	case ButtonOutlined:
-		return b.renderOutlined(label)
+		out = b.renderOutlined(label)
 	default:
-		return b.renderText(label)
+		out = b.renderText(label)
 	}
+
+	if b.State == theme.StateFocused {
+		out = theme.Fg(lipgloss.NewStyle(), theme.Primary).
+			Render(theme.Icon(theme.IconSelectionBar)) + " " + out
+	}
+	return out
 }
 
 // renderFilled renders the highest emphasis button: a solid accent fill.

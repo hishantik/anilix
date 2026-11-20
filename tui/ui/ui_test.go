@@ -240,6 +240,31 @@ func TestDisabledButtonIsNotFilled(t *testing.T) {
 	}
 }
 
+// TestFocusedButtonCarriesTheSelectionBar checks that focus is visible on
+// every variant. A filled button is already the accent colour and a text
+// button only has its label, so their focused state used to look exactly
+// like hover (filled) or default (text): in a row of dialog actions the
+// cursor could move without anything changing on screen.
+func TestFocusedButtonCarriesTheSelectionBar(t *testing.T) {
+	theme.SetProfile(colorprofile.TrueColor)
+	bar := theme.Icon(theme.IconSelectionBar)
+
+	for _, variant := range AllButtonVariants() {
+		focused := Button{Label: "A", Variant: variant, State: theme.StateFocused}.Render()
+		hover := Button{Label: "A", Variant: variant, State: theme.StateHover}.Render()
+
+		if focused == hover {
+			t.Errorf("%s: focused and hovered buttons render identically", variant)
+		}
+		if !strings.HasPrefix(strip(focused), bar+" ") {
+			t.Errorf("%s: the focused button has no selection bar: %q", variant, strip(focused))
+		}
+		if strings.Contains(strip(hover), bar) {
+			t.Errorf("%s: the hovered button must not carry the selection bar", variant)
+		}
+	}
+}
+
 func TestBreakpointsFollowTheWidth(t *testing.T) {
 	cases := []struct {
 		width int
