@@ -258,4 +258,7 @@ func TestSearchEscape(t *testing.T) {
 	if got := searchEscape("  a&b+c  "); got != "a%26b%2Bc" {
 		t.Errorf("query escaping wrong: %q", got)
 	}
+	if got := searchEscape("100% comfy"); got != "100%25+comfy" {
+		t.Errorf("%% escape wrong: %q", got)
+	}
 }

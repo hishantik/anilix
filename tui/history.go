@@ -28,9 +28,11 @@ type historyEntry struct {
 const watchHistoryLimit = 20
 
 func watchHistoryPath() string {
+	// The home fallback produces a usable path in the CWD rather than a
+	// literal "~" that no shell expands.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "~"
+		home = "."
 	}
 	return filepath.Join(home, ".anilix", "history.json")
 }

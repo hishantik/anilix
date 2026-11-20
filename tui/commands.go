@@ -30,9 +30,9 @@ func (m *SearchModel) doSearch(query string) tea.Cmd {
 	return func() tea.Msg {
 		results, err := hianimeSearchResults(hianimeProvider, query)
 		if err != nil {
-			return SearchErrorMsg{Err: err}
+			return SearchErrorMsg{Query: query, Err: err}
 		}
-		return SearchResultsMsg{Results: results}
+		return SearchResultsMsg{Query: query, Results: results}
 	}
 }
 

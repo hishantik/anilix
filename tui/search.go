@@ -861,6 +861,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case SearchResultsMsg:
+		// A slower old search must not overwrite the results of a newer
+		// one: drop responses that no longer match what is on screen.
+		if msg.Query != m.lastQuery {
+			break
+		}
 		m.searchState.Results = msg.Results
 		m.searchState.Loading = false
 		m.progressTarget = 0.6 // search done, metadata still loading
@@ -1219,7 +1224,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SearchErrorMsg:
 		// The search failed: stop the spinner and show the error panel
 		// the view already renders for searchState.Err. Without this
-		// case the message was dropped and the UI spun forever.
+		// case the message was dropped and the UI spun forever. A stale
+		// error from an older query is dropped like a stale result list.
+		if msg.Query != m.lastQuery {
+			break
+		}
 		m.searchState.Loading = false
 		m.progressTarget = 0
 		m.progress = newProgress()

@@ -445,7 +445,7 @@ func (s *StreamJSON) defaultSubtitle() string {
 
 // searchEscape makes a query safe for use in the search URL.
 func searchEscape(q string) string {
-	r := strings.NewReplacer(" ", "+", "&", "%26", "+", "%2B", "?", "%3F", "#", "%23")
+	r := strings.NewReplacer(" ", "+", "%", "%25", "&", "%26", "+", "%2B", "?", "%3F", "#", "%23")
 	return r.Replace(strings.TrimSpace(q))
 }
 

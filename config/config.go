@@ -69,9 +69,11 @@ func setDefaults() {
 }
 
 func setPaths() {
+	// The home fallback below produces a usable path in the CWD rather
+	// than a literal "~" that no shell expands.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "~"
+		home = "."
 	}
 
 	configDir := filepath.Join(home, "."+AppName)
@@ -99,7 +101,8 @@ func Set(key string, value interface{}) {
 	Save()
 }
 
-// Save persists the current config to disk.
+// Save persists the current config to disk atomically: a crash mid-write
+// must not truncate the file that holds the OAuth token.
 func Save() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -112,8 +115,19 @@ func Save() {
 		return
 	}
 	path := filepath.Join(dir, AppName+".toml")
-	if err := v.WriteConfigAs(path); err != nil {
+	tmp := path + ".tmp"
+	if err := v.WriteConfigAs(tmp); err != nil {
 		log.Printf("[anilix] failed to save config: %v\n", err)
+		os.Remove(tmp)
+		return
+	}
+	// viper applies the mode only on create; keep an existing file at 0600.
+	if err := os.Chmod(tmp, 0600); err != nil {
+		log.Printf("[anilix] failed to tighten config permissions: %v\n", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[anilix] failed to replace config: %v\n", err)
+		os.Remove(tmp)
 	}
 }
 
@@ -121,7 +135,7 @@ func Save() {
 func HistoryPath() string {
 	home, _ := os.UserHomeDir()
 	if home == "" {
-		home = "~"
+		home = "."
 	}
 	return filepath.Join(home, "."+AppName, "history.json")
 }

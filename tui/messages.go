@@ -10,6 +10,7 @@ import (
 )
 
 type SearchResultsMsg struct {
+	Query   string
 	Results []*source.Anime
 }
 
@@ -34,7 +35,8 @@ type ExternalIDs struct {
 }
 
 type SearchErrorMsg struct {
-	Err error
+	Query string
+	Err   error
 }
 
 type MetadataFetchTriggered struct {
