@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -240,9 +241,9 @@ func sha256Of(sumsPath, name string) ([32]byte, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && filepath.Base(fields[1]) == name {
-			var sum [32]byte
-			if _, err := fmt.Sscanf(fields[0], "%x", &sum); err == nil {
-				return sum, nil
+			sum, err := hex.DecodeString(fields[0])
+			if err == nil && len(sum) == sha256.Size {
+				return [32]byte(sum), nil
 			}
 		}
 	}
