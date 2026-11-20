@@ -357,6 +357,10 @@ badge shows a count in parentheses.
 Elevated container with a headline, body and a row of actions. Width is the
 outer width and is clamped to the terminal.
 
+A binary confirmation renders its two actions as one segmented switch — the
+same pill switch as the app bar's SUB/DUB: the labels keep their fixed order
+and only the fill moves. The filled segment is the action a bare enter runs.
+
 ### 8.8 Input field
 
 A bordered field: the search icon, then the value or the placeholder. The

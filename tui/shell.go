@@ -248,14 +248,16 @@ func (m *SearchModel) hintList() []string {
 	case confirmQuitState:
 		return []string{
 			ui.KeyHint("←→", "choose"),
-			ui.KeyHint("y/enter", "yes"),
+			ui.KeyHint("enter", "confirm"),
+			ui.KeyHint("y", "yes"),
 			ui.KeyHint("n/esc", "no"),
 		}
 
 	case confirmLogoutState:
 		return []string{
 			ui.KeyHint("←→", "choose"),
-			ui.KeyHint("y/enter", "yes"),
+			ui.KeyHint("enter", "confirm"),
+			ui.KeyHint("y", "yes"),
 			ui.KeyHint("n/esc", "no"),
 		}
 

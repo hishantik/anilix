@@ -668,23 +668,23 @@ func detailCompactHeader(meta *MetadataPanel, width, budget int) []string {
 	return lines
 }
 
-func (m *SearchModel) viewConfirmQuit() string {
-	yes := ui.Button{Label: "Yes", Variant: ui.ButtonFilled}
-	no := ui.Button{Label: "No", Variant: ui.ButtonText}
-	if m.confirmSelect == 0 {
-		yes.State = theme.StateFocused
-		no.State = theme.StateHover
-	} else {
-		yes.State = theme.StateHover
-		no.State = theme.StateFocused
+// confirmSwitch renders the two actions of a confirmation dialog as the same
+// segmented pill switch the app bar uses for SUB/DUB. The labels keep their
+// fixed order and only the highlight moves, so the pair never swaps places.
+func confirmSwitch(choice int) PillSwitch {
+	current := "No"
+	if choice == 0 {
+		current = "Yes"
 	}
+	return PillSwitch{Options: []string{"Yes", "No"}, Current: current}
+}
 
+func (m *SearchModel) viewConfirmQuit() string {
 	dialog := ui.Dialog{
 		Title: "Quit Anilix?",
 		Body:  "Are you sure you want to quit?",
 		Actions: []string{
-			yes.Render(),
-			no.Render(),
+			confirmSwitch(m.confirmSelect).Render(),
 		},
 		Width:     ui.OverlayWidth(44, m.contentWidth),
 		Elevation: theme.Elevation3,
@@ -1100,22 +1100,11 @@ func trackingPill(on bool) string {
 
 // viewConfirmLogout asks before the AniList credentials are dropped.
 func (m *SearchModel) viewConfirmLogout() string {
-	yes := ui.Button{Label: "Yes", Variant: ui.ButtonFilled}
-	no := ui.Button{Label: "No", Variant: ui.ButtonText}
-	if m.confirmSelect == 0 {
-		yes.State = theme.StateFocused
-		no.State = theme.StateHover
-	} else {
-		yes.State = theme.StateHover
-		no.State = theme.StateFocused
-	}
-
 	dialog := ui.Dialog{
 		Title: "Log out of AniList?",
 		Body:  "Your tracking settings stay, the token is removed.",
 		Actions: []string{
-			yes.Render(),
-			no.Render(),
+			confirmSwitch(m.confirmSelect).Render(),
 		},
 		Width:     ui.OverlayWidth(52, m.contentWidth),
 		Elevation: theme.Elevation3,

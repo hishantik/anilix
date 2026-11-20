@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 
 	"github.com/hishantik/anilix/tui/theme"
 )
@@ -20,17 +22,38 @@ func openQuitPrompt(t *testing.T, m *SearchModel) *SearchModel {
 	return m
 }
 
-// actionLine returns the dialog row that carries the buttons, without the
-// escape sequences, so the test can look at the order of what is drawn.
-func actionLine(t *testing.T, view string) string {
+// actionRow returns the raw dialog row that carries the actions, escape
+// sequences included, so the test can inspect the styling of each segment.
+func actionRow(t *testing.T, view string) string {
 	t.Helper()
-	for _, line := range strings.Split(shellStrip(view), "\n") {
+	for _, line := range strings.Split(view, "\n") {
 		if strings.Contains(line, "Yes") && strings.Contains(line, "No") {
 			return line
 		}
 	}
 	t.Fatalf("the dialog has no action row:\n%s", shellStrip(view))
 	return ""
+}
+
+// actionLine returns the action row without the escape sequences, so the
+// test can look at the order of what is drawn.
+func actionLine(t *testing.T, view string) string {
+	t.Helper()
+	return shellStrip(actionRow(t, view))
+}
+
+// styleBefore returns the escape sequence that opens the styled run of the
+// label, i.e. what sits between the previous reset and the label itself.
+func styleBefore(row, label string) string {
+	i := strings.Index(row, label)
+	if i < 0 {
+		return ""
+	}
+	j := strings.LastIndex(row[:i], "\x1b[m")
+	if j < 0 {
+		return row[:i]
+	}
+	return row[j+len("\x1b[m") : i]
 }
 
 // TestQuitDialogArrowsMoveTheSelection checks that the arrow keys move the
@@ -79,26 +102,46 @@ func TestQuitDialogVerticalKeysToggleTheSelection(t *testing.T) {
 }
 
 // TestQuitDialogShowsTheSelectedAction checks that moving the cursor is
-// visible: the selected action carries the accent bar. Colour alone is not
-// enough, because the focused and the hovered shades of the accent are
-// nearly the same.
+// visible: the selected action is the filled pill of the segmented switch,
+// exactly like the SUB/DUB toggle, and the labels never swap places.
 func TestQuitDialogShowsTheSelectedAction(t *testing.T) {
-	bar := theme.Icon(theme.IconSelectionBar)
+	theme.SetProfile(colorprofile.TrueColor)
+
+	fill := theme.PrimaryContainer.Color()
+	if fill == nil {
+		t.Fatal("expected a primary container colour in truecolor mode")
+	}
+	r, g, b, _ := fill.RGBA()
+	code := fmt.Sprintf("48;2;%d;%d;%d", r>>8, g>>8, b>>8)
 
 	m := NewSearchModel()
 	m.resize(100, 30)
 	m.state = confirmQuitState
 
-	m.confirmSelect = 0
-	line := actionLine(t, m.viewConfirmQuit())
-	if i, yes := strings.Index(line, bar), strings.Index(line, "Yes"); i < 0 || i > yes {
-		t.Errorf("the bar is not in front of the selected Yes: %q", line)
-	}
+	for _, tc := range []struct {
+		choice int
+		filled string
+		ghost  string
+	}{
+		{0, "Yes", "No"},
+		{1, "No", "Yes"},
+	} {
+		m.confirmSelect = tc.choice
+		view := m.viewConfirmQuit()
+		row := actionRow(t, view)
 
-	m.confirmSelect = 1
-	line = actionLine(t, m.viewConfirmQuit())
-	if i, yes := strings.Index(line, bar), strings.Index(line, "Yes"); i < 0 || i < yes {
-		t.Errorf("the bar is not in front of the selected No: %q", line)
+		// The labels keep their fixed order: only the highlight moves.
+		line := actionLine(t, view)
+		if yes, no := strings.Index(line, "Yes"), strings.Index(line, "No"); yes < 0 || no < 0 || yes > no {
+			t.Errorf("choice %d: the labels swapped: %q", tc.choice, line)
+		}
+
+		if !strings.Contains(styleBefore(row, tc.filled), code) {
+			t.Errorf("choice %d: %s is not the filled segment", tc.choice, tc.filled)
+		}
+		if strings.Contains(styleBefore(row, tc.ghost), code) {
+			t.Errorf("choice %d: %s carries the fill too", tc.choice, tc.ghost)
+		}
 	}
 }
 
