@@ -115,7 +115,9 @@ func Save() {
 		return
 	}
 	path := filepath.Join(dir, AppName+".toml")
-	tmp := path + ".tmp"
+	// Viper picks the serializer from the file extension: the temp file
+	// must end in .toml or WriteConfigAs refuses to write it.
+	tmp := filepath.Join(dir, AppName+".tmp.toml")
 	if err := v.WriteConfigAs(tmp); err != nil {
 		log.Printf("[anilix] failed to save config: %v\n", err)
 		os.Remove(tmp)
