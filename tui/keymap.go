@@ -42,8 +42,8 @@ func newKeymap() keymap {
 			key.WithHelp("ctrl+c", "quit"),
 		),
 		Toggle: key.NewBinding(
-			key.WithKeys("ctrl+t"),
-			key.WithHelp("ctrl+t", "toggle sub/dub"),
+			key.WithKeys("tab", "ctrl+t"),
+			key.WithHelp("tab", "toggle sub/dub"),
 		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),

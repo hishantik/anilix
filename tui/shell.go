@@ -325,7 +325,7 @@ func (m *SearchModel) hintList() []string {
 		return []string{
 			ui.KeyHint("esc", "back"),
 			ui.KeyHint("enter", "play"),
-			ui.KeyHint("ctrl+t", "sub/dub"),
+			ui.KeyHint("tab", "sub/dub"),
 			ui.KeyHint("ctrl+c", "quit"),
 		}
 

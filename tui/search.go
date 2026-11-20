@@ -542,6 +542,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.state == confirmLogoutState {
+			if key.Matches(msg, m.keymap.Toggle) {
+				m.toggleTranslation()
+				return m, nil
+			}
 			switch msg.String() {
 			case "y", "enter":
 				if m.confirmSelect == 0 {
@@ -561,7 +565,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = anilistState
 				m.anilistCursor = 1
 				return m, nil
-			case "left", "right", "h", "l", "up", "k", "down", "j", "tab":
+			case "left", "right", "h", "l", "up", "k", "down", "j":
 				if m.confirmSelect == 0 {
 					m.confirmSelect = 1
 				} else {
@@ -608,12 +612,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.state == confirmQuitState {
+			if key.Matches(msg, m.keymap.Toggle) {
+				m.toggleTranslation()
+				return m, nil
+			}
 			switch msg.String() {
 			case "left", "h":
 				m.confirmSelect = 0
 			case "right", "l":
 				m.confirmSelect = 1
-			case "up", "k", "down", "j", "tab":
+			case "up", "k", "down", "j":
 				if m.confirmSelect == 0 {
 					m.confirmSelect = 1
 				} else {
@@ -1391,7 +1399,7 @@ func (m *SearchModel) selectRecentSearch(index int) (tea.Model, tea.Cmd) {
 
 // toggleTranslation flips the selected translation between sub and dub,
 // wiring the change through the state, the configuration and the provider
-// exactly as the ctrl+t key does.
+// exactly as the tab key does.
 func (m *SearchModel) toggleTranslation() {
 	s := &m.searchState.TranslationType
 	if *s != "sub" {

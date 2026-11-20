@@ -603,6 +603,38 @@ func TestThePillSwitchClickToggles(t *testing.T) {
 	}
 }
 
+// TestTabTogglesTheSubDubSwitch checks that tab is the keyboard shortcut of
+// the SUB/DUB pill switch, whether the search box holds the focus or not.
+func TestTabTogglesTheSubDubSwitch(t *testing.T) {
+	tempHome(t)
+	defer config.Set("translation_type", "sub")
+
+	for _, focused := range []bool{true, false} {
+		m := NewSearchModel()
+		m.resize(80, 30)
+		m.state = searchState
+		m.searchState.TranslationType = "sub"
+		if focused {
+			m.textInput.Focus()
+		} else {
+			m.textInput.Blur()
+		}
+
+		m = applyKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		if got := m.searchState.TranslationType; got != "dub" {
+			t.Errorf("focused %v: tab left the translation at %q, want dub", focused, got)
+		}
+		if got := config.GetString("translation_type"); got != "dub" {
+			t.Errorf("focused %v: the configuration kept %q, want dub", focused, got)
+		}
+
+		m = applyKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		if got := m.searchState.TranslationType; got != "sub" {
+			t.Errorf("focused %v: the second tab left the translation at %q, want sub", focused, got)
+		}
+	}
+}
+
 // TestTheSubDubSettingIsWired checks that the sub/dub row changes the
 // real keys: the configuration, the search state and the provider.
 func TestTheSubDubSettingIsWired(t *testing.T) {

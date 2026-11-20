@@ -85,7 +85,6 @@ func TestQuitDialogVerticalKeysToggleTheSelection(t *testing.T) {
 	for _, msg := range []tea.KeyPressMsg{
 		{Code: tea.KeyUp},
 		{Code: tea.KeyDown},
-		{Code: tea.KeyTab},
 		{Code: 'k', Text: "k"},
 		{Code: 'j', Text: "j"},
 	} {
@@ -141,6 +140,34 @@ func TestQuitDialogShowsTheSelectedAction(t *testing.T) {
 		}
 		if strings.Contains(styleBefore(row, tc.ghost), code) {
 			t.Errorf("choice %d: %s carries the fill too", tc.choice, tc.ghost)
+		}
+	}
+}
+
+// TestConfirmDialogTabTogglesTheTranslation checks that tab is reserved for
+// the SUB/DUB switch even while a confirmation is open: it flips the
+// translation and leaves the Yes/No cursor alone.
+func TestConfirmDialogTabTogglesTheTranslation(t *testing.T) {
+	tempHome(t)
+
+	for _, state := range []tuiState{confirmQuitState, confirmLogoutState} {
+		m := NewSearchModel()
+		m.resize(100, 30)
+		m.state = state
+		m.confirmSelect = 1
+		m.searchState.TranslationType = "sub"
+
+		m = applyKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		if got := m.searchState.TranslationType; got != "dub" {
+			t.Errorf("state %v: tab left the translation at %q, want dub", state, got)
+		}
+		if m.confirmSelect != 1 {
+			t.Errorf("state %v: tab moved the Yes/No cursor to %d", state, m.confirmSelect)
+		}
+
+		m = applyKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+		if got := m.searchState.TranslationType; got != "sub" {
+			t.Errorf("state %v: the second tab left the translation at %q, want sub", state, got)
 		}
 	}
 }
