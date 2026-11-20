@@ -12,22 +12,22 @@ type AnimeSingleResponse struct {
 
 // AnimeData represents a single anime in Jikan response
 type AnimeData struct {
-	MalID            int         `json:"mal_id"`
-	Title            string      `json:"title"`
-	TitleEnglish     string      `json:"title_english"`
-	TitleJapanese    string      `json:"title_japanese"`
-	URL              string      `json:"url"`
-	Images           Images      `json:"images"`
-	Year             interface{} `json:"year"` // can be null or int
-	Genres           []Genre     `json:"genres"`
-	Status           string      `json:"status"`
-	Synopsis         string      `json:"synopsis"`
-	Type             string      `json:"type"`       // "TV", "Movie", "OVA", etc.
-	Episodes         int         `json:"episodes"`   // number of episodes
-	Rating           string      `json:"rating"`     // "PG-13 - Teens 13 or older"
-	Score            float64     `json:"score"`      // e.g., 8.02
-	Rank             int         `json:"rank"`       // e.g., 726
-	Popularity       int         `json:"popularity"` // e.g., 9
+	MalID         int         `json:"mal_id"`
+	Title         string      `json:"title"`
+	TitleEnglish  string      `json:"title_english"`
+	TitleJapanese string      `json:"title_japanese"`
+	URL           string      `json:"url"`
+	Images        Images      `json:"images"`
+	Year          interface{} `json:"year"` // can be null or int
+	Genres        []Genre     `json:"genres"`
+	Status        string      `json:"status"`
+	Synopsis      string      `json:"synopsis"`
+	Type          string      `json:"type"`       // "TV", "Movie", "OVA", etc.
+	Episodes      int         `json:"episodes"`   // number of episodes
+	Rating        string      `json:"rating"`     // "PG-13 - Teens 13 or older"
+	Score         float64     `json:"score"`      // e.g., 8.02
+	Rank          int         `json:"rank"`       // e.g., 726
+	Popularity    int         `json:"popularity"` // e.g., 9
 }
 
 // Images contains image URLs

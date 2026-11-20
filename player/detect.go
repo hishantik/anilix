@@ -3,6 +3,7 @@ package player
 import (
 	"os/exec"
 	"runtime"
+	"sync"
 )
 
 type Detector struct{}
@@ -87,9 +88,17 @@ func (d *Detector) PreferredForReferrer(needsReferrer bool) *Player {
 	return d.Preferred()
 }
 
+// IsAvailable is memoized: exec'ing --version is slow (vlc can take
+// seconds) and detection runs per stream candidate in the play path.
+var availCache sync.Map
+
 func IsAvailable(name string) bool {
-	cmd := exec.Command(name, "--version")
-	return cmd.Run() == nil
+	if v, ok := availCache.Load(name); ok {
+		return v.(bool)
+	}
+	ok := exec.Command(name, "--version").Run() == nil
+	availCache.Store(name, ok)
+	return ok
 }
 
 func isMpvAndroidInstalled() bool {

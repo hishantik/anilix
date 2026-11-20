@@ -11,8 +11,12 @@ type keymap struct {
 	Toggle     key.Binding
 	Search     key.Binding
 	Settings   key.Binding
+	Theme      key.Binding
+	Menu       key.Binding
+	MenuAlt    key.Binding
 	ConfirmYes key.Binding
 	ConfirmNo  key.Binding
+	Retry      key.Binding
 }
 
 func newKeymap() keymap {
@@ -38,8 +42,8 @@ func newKeymap() keymap {
 			key.WithHelp("ctrl+c", "quit"),
 		),
 		Toggle: key.NewBinding(
-			key.WithKeys("ctrl+t"),
-			key.WithHelp("ctrl+t", "toggle sub/dub"),
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "toggle sub/dub"),
 		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),
@@ -49,6 +53,18 @@ func newKeymap() keymap {
 			key.WithKeys("ctrl+s"),
 			key.WithHelp("ctrl+s", "settings"),
 		),
+		Theme: key.NewBinding(
+			key.WithKeys("ctrl+g"),
+			key.WithHelp("ctrl+g", "design system"),
+		),
+		Menu: key.NewBinding(
+			key.WithKeys("ctrl+e"),
+			key.WithHelp("ctrl+e", "menu"),
+		),
+		MenuAlt: key.NewBinding(
+			key.WithKeys(""),
+			key.WithHelp("", ""),
+		),
 		ConfirmYes: key.NewBinding(
 			key.WithKeys("y", "enter"),
 			key.WithHelp("y/enter", "yes"),
@@ -57,17 +73,21 @@ func newKeymap() keymap {
 			key.WithKeys("n", "esc"),
 			key.WithHelp("n/esc", "no"),
 		),
+		Retry: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "retry"),
+		),
 	}
 }
 
 func (k keymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Select, k.Settings, k.Back, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Select, k.Menu, k.Settings, k.Back, k.Quit}
 }
 
 func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Select},
-		{k.Back, k.Quit, k.Toggle, k.Settings},
+		{k.Menu, k.Back, k.Quit, k.Toggle, k.Settings},
 	}
 }
 
@@ -89,13 +109,25 @@ type settingsKeymap struct {
 	Down  key.Binding
 	Left  key.Binding
 	Right key.Binding
+	Enter key.Binding
 	Close key.Binding
 }
 
 func (k settingsKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Close}
+	bindings := []key.Binding{k.Up, k.Down}
+	if k.Left.Keys() != nil {
+		bindings = append(bindings, k.Left)
+	}
+	if k.Right.Keys() != nil {
+		bindings = append(bindings, k.Right)
+	}
+	if k.Enter.Keys() != nil {
+		bindings = append(bindings, k.Enter)
+	}
+	bindings = append(bindings, k.Close)
+	return bindings
 }
 
 func (k settingsKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right, k.Close}}
+	return [][]key.Binding{k.ShortHelp()}
 }

@@ -3,7 +3,6 @@ package player
 import (
 	_ "embed"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -27,10 +26,10 @@ type SkipInterval struct {
 }
 
 type Options struct {
-	Title      string
-	Subtitles  []string
-	Referrer   string
-	SkipTimes  []SkipInterval
+	Title     string
+	Subtitles []string
+	Referrer  string
+	SkipTimes []SkipInterval
 }
 
 var (
@@ -167,12 +166,10 @@ func (p *Player) mpvArgs(url string, opts Options) []string {
 func ensureSkipScript() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Printf("[anilix] cannot resolve home dir for skip script: %v\n", err)
 		return ""
 	}
 	dir := filepath.Join(home, ".anilix")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Printf("[anilix] failed to create anilix dir: %v\n", err)
 		return ""
 	}
 
@@ -182,7 +179,6 @@ func ensureSkipScript() string {
 	}
 
 	if err := os.WriteFile(path, []byte(aniSkipLuaScript), 0644); err != nil {
-		log.Printf("[anilix] failed to write skip script: %v\n", err)
 		return ""
 	}
 	return path
@@ -253,8 +249,13 @@ func (p *Player) mpvAndroidArgs(url string, opts Options) []string {
 // mpv-android's scripts directory so it auto-loads on every start.
 func ensureAndroidSkipScript() {
 	dir := "/data/data/is.xyz.mpv/files/scripts"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Printf("[anilix] failed to create mpv scripts dir: %v\n", err)
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		// Already installed.
+		return
+	}
+	// Create dir if it doesn't exist; ignore benign "exists" errors.
+	if err := os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
+		// Silently skip: skip script is optional, playback still works.
 		return
 	}
 
@@ -263,8 +264,7 @@ func ensureAndroidSkipScript() {
 		return // already installed
 	}
 	if err := os.WriteFile(path, []byte(aniSkipLuaScript), 0644); err != nil {
-		log.Printf("[anilix] failed to write android skip script: %v\n", err)
-		return
+		// Silently skip.
 	}
 }
 
@@ -272,15 +272,17 @@ func ensureAndroidSkipScript() {
 // persistent Lua script reads on each file-loaded event.
 func writeAndroidSkipConfig(skipTimes []SkipInterval) {
 	dir := "/data/data/is.xyz.mpv/files"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Printf("[anilix] failed to create mpv config dir: %v\n", err)
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		// Config dir already exists.
+	} else if err := os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
+		// Silently skip: config is optional, playback still works.
 		return
 	}
 
 	path := filepath.Join(dir, "anilix-skip.conf")
 	content := formatSkipOpts(skipTimes)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		log.Printf("[anilix] failed to write skip config: %v\n", err)
+		// Silently skip.
 	}
 }
 

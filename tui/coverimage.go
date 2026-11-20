@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -21,62 +23,29 @@ import (
 type Protocol int
 
 const (
-	ProtocolNone      Protocol = iota // No image protocol available
+	ProtocolNone      Protocol = iota // No image: the framed text placeholder
 	ProtocolKitty                     // Kitty graphics protocol via Unicode placeholders
+	ProtocolITerm2                    // iTerm2 inline images (OSC 1337)
 	ProtocolHalfBlock                 // ANSI half-block characters (SGR, works everywhere)
 	ProtocolChafa                     // chafa unicode art (universal fallback)
 )
 
-// currentProtocol caches the detected protocol for the session.
-var currentProtocol Protocol = ProtocolNone
-var protocolDetected bool
-
-// DetectTerminalProtocol returns the best image protocol for the current terminal.
-//
-// Kitty graphics uses Unicode placeholders (\U0010EEEE + combining marks) that
-// survive Bubbletea v2's ultraviolet cell buffer. The image data is transmitted
-// via APC sequences using tea.Raw(), which bypasses the renderer entirely.
-func DetectTerminalProtocol() Protocol {
-	if protocolDetected {
-		return currentProtocol
-	}
-	protocolDetected = true
-
-	// Kitty graphics via Unicode placeholders — best quality, works with
-	// Bubbletea v2 because placeholders are text, not zero-width escapes.
-	if DetectKittySupport() {
-		currentProtocol = ProtocolKitty
-		return currentProtocol
-	}
-
-	// Half-block: SGR colors + ▀ character — works everywhere with truecolor
-	if DetectTrueColorSupport() {
-		currentProtocol = ProtocolHalfBlock
-		return currentProtocol
-	}
-
-	// Chafa fallback: if chafa binary is available
-	if hasBinary("chafa") {
-		currentProtocol = ProtocolChafa
-		return currentProtocol
-	}
-
-	currentProtocol = ProtocolNone
-	return currentProtocol
-}
-
 // DetectKittySupport checks if the terminal supports Kitty graphics protocol.
+//
+// WezTerm implements the Kitty graphics protocol together with the Unicode
+// placeholders this renderer needs, so it belongs on the list too.
 func DetectKittySupport() bool {
 	if os.Getenv("KITTY_WINDOW_ID") != "" {
 		return true
 	}
-	termProg := strings.ToLower(os.Getenv("TERM_PROGRAM"))
-	if termProg == "kitty" || termProg == "ghostty" {
+	term, prog := termAndProgram()
+	if prog == "kitty" || prog == "ghostty" || prog == "wezterm" {
 		return true
 	}
-	term := strings.ToLower(os.Getenv("TERM"))
-	if strings.Contains(term, "kitty") || strings.Contains(term, "ghostty") {
-		return true
+	for _, marker := range []string{"kitty", "ghostty", "wezterm"} {
+		if strings.Contains(term, marker) {
+			return true
+		}
 	}
 	return false
 }
@@ -87,12 +56,17 @@ func DetectTrueColorSupport() bool {
 	if ct == "truecolor" || ct == "24bit" {
 		return true
 	}
-	term := os.Getenv("TERM")
+	term, _ := termAndProgram()
 	switch term {
 	case "vt100", "vt220", "linux", "dumb", "":
 		return false
 	}
 	return true
+}
+
+// termAndProgram returns the lower-cased TERM and TERM_PROGRAM values.
+func termAndProgram() (term, prog string) {
+	return strings.ToLower(os.Getenv("TERM")), strings.ToLower(os.Getenv("TERM_PROGRAM"))
 }
 
 func hasBinary(name string) bool {
@@ -116,6 +90,33 @@ func coverCachePath(url string) string {
 	return filepath.Join(dir, hex.EncodeToString(hash[:8])+ext)
 }
 
+// trimCoverCache keeps the cover disk cache under ~200 files, oldest first.
+func trimCoverCache() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, ".anilix", "cache", "covers")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) <= 200 {
+		return
+	}
+	type df struct {
+		name string
+		mod  time.Time
+	}
+	files := make([]df, 0, len(entries))
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			files = append(files, df{e.Name(), info.ModTime()})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
+	for i := 0; i < len(files)-200; i++ {
+		os.Remove(filepath.Join(dir, files[i].name))
+	}
+}
+
 // DownloadCoverImage downloads an image from a URL and returns both the decoded image
 // and the local cache file path.
 func DownloadCoverImage(url string) (image.Image, string, error) {
@@ -136,6 +137,9 @@ func DownloadCoverImage(url string) (image.Image, string, error) {
 
 	// Save to cache
 	os.WriteFile(cachePath, data, 0o644)
+	// The disk cache is unbounded otherwise: cheap sweep, rare enough not
+	// to matter, and each file is small.
+	trimCoverCache()
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -143,40 +147,6 @@ func DownloadCoverImage(url string) (image.Image, string, error) {
 	}
 
 	return img, cachePath, nil
-}
-
-// RenderCoverImage renders an image for the terminal, using the best available protocol.
-// For Kitty protocol, returns the placeholder text (transmit seq is sent separately).
-// maxRows limits the image height (0 = use protocol default).
-func RenderCoverImage(img image.Image, maxWidth int, protocol Protocol, cachePath string, maxRows int) string {
-	switch protocol {
-	case ProtocolKitty:
-		return renderKittyCover(img, maxWidth, maxRows).Placeholder
-	case ProtocolHalfBlock:
-		return renderHalfBlock(img, maxWidth, maxRows)
-	case ProtocolChafa:
-		if cachePath != "" {
-			if result, err := renderChafaCover(cachePath, maxWidth); err == nil && result != "" {
-				return result
-			}
-		}
-		// Fall through to half-block if chafa fails
-		return renderHalfBlock(img, maxWidth, maxRows)
-	}
-	return ""
-}
-
-// RenderCoverImageKitty renders an image using Kitty protocol and returns the
-// full result including the APC transmit sequence. For non-Kitty protocols,
-// the TransmitSeq will be empty.
-func RenderCoverImageKitty(img image.Image, maxWidth int, protocol Protocol, cachePath string, maxRows int) KittyRenderResult {
-	if protocol == ProtocolKitty {
-		return renderKittyCover(img, maxWidth, maxRows)
-	}
-	// For non-Kitty protocols, fall back to regular rendering
-	return KittyRenderResult{
-		Placeholder: RenderCoverImage(img, maxWidth, protocol, cachePath, maxRows),
-	}
 }
 
 // renderKittyCover renders an image using Kitty graphics protocol with

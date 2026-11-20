@@ -15,98 +15,553 @@ import (
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/update"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/hishantik/anilix/provider/hianime"
 )
 
 func (m *SearchModel) doSearch(query string) tea.Cmd {
-	translationType := m.searchState.TranslationType
-	if translationType == "" {
-		translationType = "sub"
-	}
-	allanimeClient := m.allanimeClient
+	hianimeProvider := m.hianimeProvider
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		shows, err := allanimeClient.SearchShows(ctx, query, 20, 1, translationType)
+		results, err := hianimeSearchResults(hianimeProvider, query)
 		if err != nil {
-			return SearchErrorMsg{Err: err}
+			return SearchErrorMsg{Query: query, Err: err}
 		}
-
-		results := make([]*source.Anime, 0, len(shows))
-		for _, show := range shows {
-			anime := allanimeClient.MapToAnime(&show)
-			results = append(results, anime)
-		}
-
-		queryLower := strings.ToLower(query)
-		sort.SliceStable(results, func(i, j int) bool {
-			nameI := strings.ToLower(results[i].Name)
-			nameJ := strings.ToLower(results[j].Name)
-			scoreI := matchScore(nameI, queryLower)
-			scoreJ := matchScore(nameJ, queryLower)
-			return scoreI > scoreJ
-		})
-
-		return SearchResultsMsg{Results: results}
+		return SearchResultsMsg{Query: query, Results: results}
 	}
 }
 
-// fetchMetadataBatch fetches metadata for all results in a single AniList GraphQL call.
-func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
-	// Collect all AniList IDs with their result index
-	type indexID struct {
-		Index      int
-		AniListID  int
+// resolveIDs fills AniList and MAL IDs for search results in the background,
+// so the result list appears immediately instead of waiting for AniList.
+func (m *SearchModel) resolveIDs(results []*source.Anime) tea.Cmd {
+	anilistClient := m.anilistClient
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return IDsResolvedMsg{IDs: resolveAnimeIDs(ctx, anilistClient, results)}
 	}
-	var pairs []indexID
+}
+
+// resolveIDsViaKitsu resolves AniList and MAL IDs for search results using
+// Kitsu, whose single request carries both ids through the sideloaded
+// mappings. It runs in the background and never blocks the result list or
+// the metadata batch; the UI applies the ids only where AniList resolved
+// none, so this never races with the AniList resolution.
+func (m *SearchModel) resolveIDsViaKitsu(results []*source.Anime) tea.Cmd {
+	kitsuClient := m.kitsuClient
+
+	return func() tea.Msg {
+		if kitsuClient == nil || len(results) == 0 {
+			return MALIDsResolvedMsg{IDs: nil}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		titles := make([]string, 0, len(results))
+		for _, a := range results {
+			titles = append(titles, a.Name)
+		}
+
+		matches, err := kitsuClient.ResolveByTitles(ctx, titles)
+		if err != nil {
+			// Non-fatal: the ids are optional enrichment; silently skip.
+			return MALIDsResolvedMsg{IDs: nil}
+		}
+
+		ids := make(map[int]ExternalIDs)
+		animes := make(map[int]*kitsu.Anime)
+		for i, match := range matches {
+			if match.Anime == nil || i >= len(results) {
+				continue
+			}
+			animes[i] = match.Anime
+			ids[i] = ExternalIDs{
+				AniListID: match.Anime.AniListID,
+				MALID:     match.Anime.MALID,
+			}
+		}
+		return MALIDsResolvedMsg{IDs: ids, Animes: animes}
+	}
+}
+
+// resolveAnimeIDs resolves AniList IDs (and MAL IDs) for the given results.
+//
+// AniList is the primary metadata provider: hianime gives no AniList ID, so
+// titles are matched against AniList, which also returns the MAL ID used for
+// AniSkip. Matching is exact-after-normalization, never fuzzy, because a
+// near-match would attach the wrong anime. The ids are returned keyed by
+// result index — the caller applies them on the UI thread rather than the
+// goroutine mutating the results it shares with the renderer.
+func resolveAnimeIDs(ctx context.Context, anilistClient *anilist.Client, results []*source.Anime) map[int]ExternalIDs {
+	if len(results) == 0 || anilistClient == nil {
+		return nil
+	}
+
+	titles := make([]string, 0, len(results))
+	for _, a := range results {
+		titles = append(titles, a.Name)
+	}
+
+	matches, err := anilistClient.ResolveByTitles(ctx, titles)
+	if err != nil {
+		log.Printf("[anilix] anilist id resolution failed: %v\n", err)
+		return nil
+	}
+	ids := make(map[int]ExternalIDs, len(matches))
+	for i, m := range matches {
+		if m.Media == nil || i >= len(results) {
+			continue
+		}
+		ids[i] = ExternalIDs{AniListID: m.Media.ID, MALID: m.Media.IDMal}
+	}
+	return ids
+}
+
+// anyMissingMAL reports whether some result still lacks a MAL ID.
+func anyMissingMAL(animes []*source.Anime) bool {
+	for _, a := range animes {
+		if a.MALID == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// hianimeSearchResults searches hianime. IDs (AniList/MAL) are resolved
+// separately in the background so results show up immediately.
+func hianimeSearchResults(hianimeProvider *hianime.Provider, query string) ([]*source.Anime, error) {
+	found, err := hianimeProvider.Search(query)
+	if err != nil || len(found) == 0 {
+		if err != nil {
+			log.Printf("[anilix] hianime search failed: %v\n", err)
+		}
+		return nil, err
+	}
+
+	queryLower := strings.ToLower(query)
+	sort.SliceStable(found, func(i, j int) bool {
+		nameI := strings.ToLower(found[i].Name)
+		nameJ := strings.ToLower(found[j].Name)
+		scoreI := matchScore(nameI, queryLower)
+		scoreJ := matchScore(nameJ, queryLower)
+		return scoreI > scoreJ
+	})
+
+	return found, nil
+}
+
+// fetchMetadataBatch fetches metadata for all results, from every source
+// that can serve them:
+//
+//   - results with an AniList id come from one batched AniList GraphQL call
+//     (the richest source: it has the genres);
+//   - results with only a MAL id (movies and OVAs AniList did not match by
+//     title) come from Jikan, one call each;
+//   - results no id API knows fall back to the Kitsu entry resolved for the
+//     title, when there is one;
+//   - results no metadata source knows (announced films, unaired specials)
+//     get a placeholder from the hianime search result itself, so the poster
+//     and type still show.
+//
+// Results already present in the metadata cache are skipped, so a rerun
+// after Kitsu IDs arrive only fetches what is still missing. A placeholder
+// panel does not count as present: a real panel upgrades it.
+
+// indexID pairs a result index with the metadata id it is fetched by.
+type indexID struct {
+	Index int
+	ID    int
+}
+
+func (m *SearchModel) fetchMetadataBatch(results []*source.Anime) tea.Cmd {
+	var anilistPairs []indexID
+	var malPairs []indexID
 	for i, r := range results {
+		if m.hasRealMetadata(i) {
+			continue
+		}
 		if r.AniListID > 0 {
-			pairs = append(pairs, indexID{Index: i, AniListID: r.AniListID})
+			anilistPairs = append(anilistPairs, indexID{Index: i, ID: r.AniListID})
+		} else if r.MALID > 0 {
+			malPairs = append(malPairs, indexID{Index: i, ID: r.MALID})
 		}
 	}
 
-	if len(pairs) == 0 {
+	// Entries neither id API knows can still be shown from the Kitsu
+	// resolution. Snapshot the cache: it is owned by the UI thread, and
+	// the fetch runs in the background.
+	kitsuFallback := make(map[int]*kitsu.Anime)
+	for i, a := range m.kitsuAnimeCache {
+		if m.hasRealMetadata(i) {
+			continue
+		}
+		kitsuFallback[i] = a
+	}
+
+	// The provider's own pages are the last resort. Their metadata is
+	// fetched after the batch, and only for the entries the other tiers
+	// leave empty: each page is ~200KB. The search result is kept as the
+	// cheap fallback when the page fails or the cap is reached.
+	var sourceFallback []indexAnime
+	for i, r := range results {
+		if m.hasRealMetadata(i) {
+			continue
+		}
+		if searchResultPanel(r) != nil {
+			sourceFallback = append(sourceFallback, indexAnime{Index: i, Anime: r})
+		}
+	}
+
+	if len(anilistPairs) == 0 && len(malPairs) == 0 && len(kitsuFallback) == 0 && len(sourceFallback) == 0 {
 		return func() tea.Msg {
 			return MetadataBatchLoadedMsg{MetadataMap: make(map[int]*MetadataPanel)}
 		}
 	}
 
-	ids := make([]int, len(pairs))
-	for i, p := range pairs {
-		ids[i] = p.AniListID
+	ids := make([]int, len(anilistPairs))
+	for i, p := range anilistPairs {
+		ids[i] = p.ID
 	}
 
 	anilistClient := m.anilistClient
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+	jikanClient := m.jikanClient
+	hianimeProvider := m.hianimeProvider
 
-		batch, err := anilistClient.GetAnimeBatch(ctx, ids)
-		if err != nil {
-			return MetadataBatchLoadedMsg{MetadataMap: make(map[int]*MetadataPanel)}
-		}
+	// tail does the rate-limited Jikan requests, the Kitsu fallback and
+	// the follow-up show pages, and returns the batch message. It is a
+	// closure so the AniList tier can hand its half-built result map over
+	// and report its own progress first.
+	tail := func(resultMap map[int]*MetadataPanel) tea.Cmd {
+		return func() tea.Msg {
+			// Jikan covers the MAL-id-only entries. It is rate limited to
+			// three requests a second, so the loop paces itself.
+			for _, p := range malPairs {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				data, err := jikanClient.GetAnime(ctx, p.ID)
+				cancel()
+				if err == nil && data != nil {
+					resultMap[p.Index] = mergeMetadata(data, nil)
+				}
+				time.Sleep(350 * time.Millisecond)
+			}
 
-		resultMap := make(map[int]*MetadataPanel, len(pairs))
-		for _, p := range pairs {
-			if media, ok := batch[p.AniListID]; ok {
-				resultMap[p.Index] = mergeMetadata(nil, media)
+			// Kitsu is the last resort for entries without usable ids. A
+			// nil panel is not cached, so a later rerun can still retry it.
+			for i, a := range kitsuFallback {
+				if _, ok := resultMap[i]; ok {
+					continue
+				}
+				if panel := kitsuToPanel(a); panel != nil {
+					resultMap[i] = panel
+				}
+			}
+
+			// Nothing metadata-side knows the entry: the show page is the
+			// last source, and the search card is the fallback if it fails.
+			// The pages are a separate pass so the panels above are not held
+			// back.
+			pending := make([]indexAnime, 0, len(sourceFallback))
+			for _, f := range sourceFallback {
+				if _, ok := resultMap[f.Index]; !ok {
+					pending = append(pending, f)
+				}
+			}
+			return MetadataBatchLoadedMsg{
+				MetadataMap: resultMap,
+				Target:      metadataBatchTarget,
+				FollowUp:    showPagePanelsCmd(hianimeProvider, pending),
 			}
 		}
-		return MetadataBatchLoadedMsg{MetadataMap: resultMap}
+	}
+
+	return func() tea.Msg {
+		resultMap := make(map[int]*MetadataPanel)
+
+		if len(anilistPairs) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			batch, err := anilistClient.GetAnimeBatch(ctx, ids)
+			cancel()
+			if err == nil {
+				for _, p := range anilistPairs {
+					if media, ok := batch[p.ID]; ok {
+						resultMap[p.Index] = mergeMetadata(nil, media)
+					}
+				}
+			}
+			// The AniList tier is done: report it here and run the rest of
+			// the batch alongside, so the bar moves while Jikan and the
+			// show pages run instead of only when everything lands.
+			return tea.Batch(
+				func() tea.Msg { return MetadataProgressMsg{Target: metadataAnilistTarget} },
+				tail(resultMap),
+			)
+		}
+
+		return tail(resultMap)()
+	}
+}
+
+// Progress targets of the metadata phase. The search owns the bar up to
+// 0.6; the metadata tiers divide the rest between them, so the bar moves
+// at each tier boundary instead of sitting still until everything lands.
+const (
+	metadataAnilistTarget = 0.68 // batched AniList call done
+	metadataBatchTarget   = 0.85 // AniList + Jikan + Kitsu done
+	metadataDoneTarget    = 1.0  // the follow-up show pages are done too
+)
+
+// indexAnime pairs a result index with the search result it came from.
+type indexAnime struct {
+	Index int
+	Anime *source.Anime
+}
+
+// showPagePanelsCmd fetches the hianime show pages of the entries no
+// metadata API knew. It runs after the metadata batch: the pages are the
+// provisional source, so they must not delay the real panels. Only a few
+// pages are fetched per search to keep an all-placeholder list from
+// downloading megabytes.
+func showPagePanelsCmd(p *hianime.Provider, pending []indexAnime) tea.Cmd {
+	if len(pending) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		resultMap := make(map[int]*MetadataPanel)
+		fetched := 0
+		for _, f := range pending {
+			var panel *MetadataPanel
+			if fetched < maxShowPageFetches {
+				fetched++
+				ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				meta, err := p.ShowMetadata(ctx, f.Anime.ShowID, f.Anime.URL)
+				cancel()
+				if err == nil && meta != nil {
+					panel = hianimeToPanel(f.Anime, meta)
+				}
+			}
+			if panel == nil {
+				panel = searchResultPanel(f.Anime)
+			}
+			if panel != nil {
+				resultMap[f.Index] = panel
+			}
+		}
+		return MetadataBatchLoadedMsg{MetadataMap: resultMap, Target: metadataDoneTarget}
+	}
+}
+
+// maxShowPageFetches caps the number of hianime show pages fetched per
+// metadata batch. Each page is ~200KB, and a search whose entries no
+// metadata API knows is rare; the search card still covers the rest.
+const maxShowPageFetches = 5
+
+// hasRealMetadata reports whether the result has metadata from a source
+// richer than the hianime placeholder. The placeholder is provisional: the
+// next pass may upgrade it.
+func (m *SearchModel) hasRealMetadata(idx int) bool {
+	meta, ok := m.metadataCache[idx]
+	return ok && meta != nil && meta.Source != "Hianime"
+}
+
+// hasUncachedResults reports whether some result still lacks real metadata
+// and may get it: an id API knows the entry, or Kitsu resolved it.
+func (m *SearchModel) hasUncachedResults() bool {
+	for i := range m.searchState.Results {
+		if m.hasRealMetadata(i) {
+			continue
+		}
+		if _, ok := m.kitsuAnimeCache[i]; ok {
+			return true
+		}
+		r := m.searchState.Results[i]
+		if r.AniListID > 0 || r.MALID > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// searchResultPanel builds the placeholder panel from a hianime search
+// result. It covers entries no metadata API lists yet (announced films,
+// unaired specials): the provider still knows the title, poster and format,
+// and the Source marks the panel as provisional.
+func searchResultPanel(r *source.Anime) *MetadataPanel {
+	if r == nil || (r.Name == "" && r.Cover == "") {
+		return nil
+	}
+	return &MetadataPanel{
+		Title:    r.Name,
+		Cover:    r.Cover,
+		Type:     cleanFormat(r.Type),
+		Year:     r.Year,
+		Episodes: r.EpisodeCount,
+		Genres:   r.Genres,
+		Score:    r.Score,
+		Source:   "Hianime",
+	}
+}
+
+// cleanFormat strips the episode note hianime appends to some card types
+// ("MOVIE (1 EPS)") and keeps the format word.
+func cleanFormat(t string) string {
+	if i := strings.Index(t, " ("); i >= 0 {
+		t = t[:i]
+	}
+	return strings.TrimSpace(strings.ToUpper(t))
+}
+
+// hianimeToPanel builds the placeholder panel from a show page's detail
+// block, layering it over the search card. The page adds the synopsis,
+// genres, status, year and score that the search card does not carry;
+// the card still supplies the poster and the episode count.
+func hianimeToPanel(r *source.Anime, meta *hianime.ShowMetadata) *MetadataPanel {
+	panel := searchResultPanel(r)
+	if panel == nil {
+		if r == nil {
+			return nil
+		}
+		panel = &MetadataPanel{Title: r.Name}
+	}
+	if meta == nil {
+		return panel
+	}
+	panel.Source = "Hianime"
+	if meta.Synopsis != "" {
+		panel.Synopsis = meta.Synopsis
+	}
+	if meta.Japanese != "" {
+		panel.TitleNative = meta.Japanese
+	}
+	if meta.Score > 0 {
+		panel.Score = meta.Score
+	}
+	if len(meta.Genres) > 0 {
+		panel.Genres = meta.Genres
+	}
+	if meta.Status != "" {
+		panel.Status = hianimeStatus(meta.Status)
+	}
+	if panel.Year == 0 {
+		panel.Year = meta.Year
+	}
+	if panel.Type == "" {
+		panel.Type = cleanFormat(meta.Type)
+	}
+	if panel.Episodes == 0 {
+		panel.Episodes = meta.Episodes
+	}
+	return panel
+}
+
+// hianimeStatus maps the site's airing wording onto the words AniList uses,
+// so the panel language does not change with the source.
+func hianimeStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "finished airing":
+		return "FINISHED"
+	case "currently airing":
+		return "RELEASING"
+	case "not yet aired":
+		return "NOT_YET_RELEASED"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(strings.TrimSpace(status))
+	}
+}
+
+// kitsuToPanel builds a metadata panel from a Kitsu entry. Kitsu is the
+// fallback source: it carries the display fields AniList and Jikan carry,
+// including the genres, for entries those APIs do not know by id.
+func kitsuToPanel(a *kitsu.Anime) *MetadataPanel {
+	if a == nil {
+		return nil
+	}
+	panel := &MetadataPanel{
+		Title:        a.Canonical,
+		TitleEnglish: a.Titles["en"],
+		TitleNative:  a.Titles["ja_jp"],
+		Cover:        a.Poster,
+		Type:         kitsuFormat(a.ShowType),
+		Status:       kitsuStatus(a.Status),
+		Episodes:     a.EpisodeCount,
+		Score:        a.AverageRating / 10,
+		Genres:       a.Genres,
+		Synopsis:     a.Synopsis,
+		Source:       "Kitsu",
+	}
+	if len(a.StartDate) >= 4 {
+		if y, err := strconv.Atoi(a.StartDate[:4]); err == nil {
+			panel.Year = y
+		}
+	}
+	return panel
+}
+
+// kitsuFormat maps Kitsu's lowercase show type onto the format words the
+// panel shows ("TV", "MOVIE", "OVA", ...).
+func kitsuFormat(showType string) string {
+	switch strings.ToLower(showType) {
+	case "tv":
+		return "TV"
+	case "movie":
+		return "MOVIE"
+	case "ova":
+		return "OVA"
+	case "ona":
+		return "ONA"
+	case "special":
+		return "SPECIAL"
+	case "music":
+		return "MUSIC"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(showType)
+	}
+}
+
+// kitsuStatus maps Kitsu's release status onto the words AniList uses, so
+// the panel language does not change with the source.
+func kitsuStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "current":
+		return "RELEASING"
+	case "finished":
+		return "FINISHED"
+	case "tba":
+		return "TBA"
+	case "upcoming":
+		return "NOT_YET_RELEASED"
+	case "":
+		return ""
+	default:
+		return strings.ToUpper(status)
 	}
 }
 
 // downloadCoverCmd downloads and renders a cover image for a given result index.
-func downloadCoverCmd(coverURL string, panelWidth int, index int, maxRows int) tea.Cmd {
+//
+// The width and the rows are the size of the image itself, without the
+// frame it is shown in: the cover is rendered for the panel it lands in, so
+// a resize renders it again.
+//
+// The renderer is adaptive: the cover is rendered with the best protocol
+// of the chain, and a protocol that fails is skipped for the session. A
+// terminal without a picture protocol never downloads anything: the
+// framed placeholder needs no image.
+func downloadCoverCmd(coverURL string, width, rows, index int) tea.Cmd {
 	if coverURL == "" {
 		return nil
 	}
-	protocol := DetectTerminalProtocol()
-	if protocol == ProtocolNone {
+	if !chainCanRenderPictures() {
 		return nil
 	}
 	return func() tea.Msg {
@@ -114,14 +569,28 @@ func downloadCoverCmd(coverURL string, panelWidth int, index int, maxRows int) t
 		if err != nil {
 			return CoverImageLoadedMsg{Rendered: "", Index: index}
 		}
-		result := RenderCoverImageKitty(img, panelWidth, protocol, cachePath, maxRows)
+		result := RenderAdaptive(img, width, rows, cachePath, coverURL)
 		return CoverImageLoadedMsg{
 			Rendered:         result.Placeholder,
 			KittyTransmitSeq: result.TransmitSeq,
-			KittyImageID:     result.ImageID,
+			KittyImageID:     result.KittyImageID,
 			Index:            index,
+			Width:            width,
+			Rows:             rows,
 		}
 	}
+}
+
+// chainCanRenderPictures reports whether any protocol of the chain draws
+// an actual picture. The placeholder at the end of the chain does not:
+// it is the reason the download would be wasted.
+func chainCanRenderPictures() bool {
+	for _, p := range rendererChain() {
+		if p != ProtocolNone {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *SearchModel) fetchMetadata() tea.Cmd {
@@ -134,6 +603,15 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 	anime := m.searchState.Results[m.searchState.Selected]
 	idx := m.searchState.Selected
 
+	// The Kitsu entry, when the title resolution found one, is the
+	// fallback for every failure below: movies and OVAs AniList does not
+	// list under the searched title still get their cover and synopsis.
+	kitsuAnime := m.kitsuAnimeCache[idx]
+
+	// The provider's own search data is the last resort, for entries no
+	// metadata API knows at all.
+	fallback := searchResultPanel(anime)
+
 	// Prefer AniList (faster GraphQL API) — only fall back to Jikan if no AniList ID
 	if anime.AniListID > 0 {
 		anilistID := anime.AniListID
@@ -143,7 +621,10 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 			defer cancel()
 			data, err := anilistClient.GetAnime(ctx, anilistID)
 			if err != nil {
-				return MetadataLoadedMsg{Metadata: nil, Index: idx}
+				if kitsuAnime != nil {
+					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
+				}
+				return MetadataLoadedMsg{Metadata: fallback, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(nil, data), Index: idx}
 		}
@@ -157,14 +638,33 @@ func (m *SearchModel) fetchMetadata() tea.Cmd {
 			defer cancel()
 			data, err := jikanClient.GetAnime(ctx, malID)
 			if err != nil {
-				return MetadataLoadedMsg{Metadata: nil, Index: idx}
+				if kitsuAnime != nil {
+					return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
+				}
+				return MetadataLoadedMsg{Metadata: fallback, Index: idx}
 			}
 			return MetadataLoadedMsg{Metadata: mergeMetadata(data, nil), Index: idx}
 		}
 	}
 
+	// No id API matched the title: the Kitsu entry is all there is.
+	if kitsuAnime != nil {
+		return func() tea.Msg {
+			return MetadataLoadedMsg{Metadata: kitsuToPanel(kitsuAnime), Index: idx}
+		}
+	}
+
+	// No id API matched the title: the provider's show page is the last
+	// source, and the plain search card is the fallback if it fails.
+	hianimeProvider := m.hianimeProvider
 	return func() tea.Msg {
-		return MetadataLoadedMsg{Metadata: nil, Index: idx}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		meta, err := hianimeProvider.ShowMetadata(ctx, anime.ShowID, anime.URL)
+		cancel()
+		if err != nil || meta == nil {
+			return MetadataLoadedMsg{Metadata: fallback, Index: idx}
+		}
+		return MetadataLoadedMsg{Metadata: hianimeToPanel(anime, meta), Index: idx}
 	}
 }
 
@@ -265,152 +765,74 @@ func mergeMetadata(jikanData *jikan.AnimeData, anilistData *anilist.MediaData) *
 	return panel
 }
 
-func (m *SearchModel) prefetchMetadata(ctx context.Context, start, end int) {
-	results := m.searchState.Results
-	if end > len(results) {
-		end = len(results)
-	}
-	anilistClient := m.anilistClient
-	jikanClient := m.jikanClient
-
-	anilistIDs := make([]int, 0)
-	for i := start; i < end; i++ {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		anime := results[i]
-		if anime.AniListID > 0 && !anilistClient.IsCached(anime.AniListID) {
-			anilistIDs = append(anilistIDs, anime.AniListID)
-		}
-	}
-
-	if len(anilistIDs) > 0 {
-		batchSize := 10
-		for i := 0; i < len(anilistIDs); i += batchSize {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			batchEnd := i + batchSize
-			if batchEnd > len(anilistIDs) {
-				batchEnd = len(anilistIDs)
-			}
-			batch := anilistIDs[i:batchEnd]
-			batchCtx, batchCancel := context.WithTimeout(ctx, 10*time.Second)
-			if _, err := anilistClient.GetAnimeBatch(batchCtx, batch); err != nil && ctx.Err() == nil {
-			log.Printf("[anilix] prefetch batch failed: %v\n", err)
-		}
-			batchCancel()
-		}
-	}
-
-	malIDs := make([]int, 0)
-	for i := start; i < end; i++ {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		anime := results[i]
-		if anime.MALID > 0 && !jikanClient.IsCached(anime.MALID) {
-			malIDs = append(malIDs, anime.MALID)
-		}
-	}
-
-	for _, malID := range malIDs {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		dataCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if _, err := jikanClient.GetAnime(dataCtx, malID); err != nil && ctx.Err() == nil {
-			log.Printf("[anilix] prefetch jikan failed: %v\n", err)
-		}
-		cancel()
-		time.Sleep(350 * time.Millisecond)
-	}
-
-	newTitles := make(map[int][]string)
-	for i := start; i < end; i++ {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		anime := results[i]
-		if anime.MALID == 0 {
-			continue
-		}
-		dataCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		episodes, err := jikanClient.GetEpisodes(dataCtx, anime.MALID)
-		cancel()
-		if err == nil && len(episodes) > 0 {
-			titles := make([]string, len(episodes))
-			for j, ep := range episodes {
-				titles[j] = ep.Title
-			}
-			newTitles[i] = titles
-		}
-		time.Sleep(350 * time.Millisecond)
-	}
-
-	if len(newTitles) > 0 {
-		m.episodeTitlesCacheMu.Lock()
-		for i, titles := range newTitles {
-			m.episodeTitlesCache[i] = titles
-		}
-		m.episodeTitlesCacheMu.Unlock()
-	}
-
-}
-
-func (m *SearchModel) fetchEpisodes(showID string, malID int) tea.Cmd {
+func (m *SearchModel) fetchEpisodes(anime *source.Anime) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
+	return m.fetchEpisodesHianime(anime, translationType)
+}
+
+// fetchEpisodesHianime lists episodes from hianime. The provider also
+// enriches anime.MALID from the embed URL in the background, which may
+// arrive after this command completes - later titles fetches still benefit.
+// Titles are fetched as a follow-up so the episode list appears on screen
+// while Jikan is still running, and the bar advances to 0.7.
+func (m *SearchModel) fetchEpisodesHianime(anime *source.Anime, translationType string) tea.Cmd {
 	searchSelected := m.searchState.Selected
-	allanimeClient := m.allanimeClient
+	hianimeProvider := m.hianimeProvider
+	malID := anime.MALID
 	jikanClient := m.jikanClient
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		episodes, err := allanimeClient.GetShowEpisodes(ctx, showID, translationType)
+		hianimeProvider.SetTranslation(translationType)
+		eps, err := hianimeProvider.EpisodesOf(anime, 0)
 		if err != nil {
 			return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: err}
 		}
+		// The provider may have recovered the MAL id from an embed URL
+		// during this call; the guarded map is safe to read from this
+		// goroutine and the value feeds the Jikan titles fetch below.
+		if malID == 0 {
+			malID = hianimeProvider.MALIDFromEmbed(anime.ShowID)
+		}
 
-		epList, ok := episodes[translationType]
-		if !ok {
-			epList, ok = episodes["sub"]
-			if !ok {
-				return EpisodesLoadedMsg{Episodes: nil, EpisodeTitles: nil, Error: fmt.Errorf("no episodes found for %s", translationType)}
-			}
+		epList := make([]string, 0, len(eps))
+		for _, ep := range eps {
+			epList = append(epList, strconv.FormatFloat(ep.Number, 'f', -1, 64))
 		}
 
 		m.episodeTitlesCacheMu.Lock()
-		var episodeTitles []string
-		if titles, ok := m.episodeTitlesCache[searchSelected]; ok {
-			episodeTitles = titles
-		}
+		titles := m.episodeTitlesCache[searchSelected]
 		m.episodeTitlesCacheMu.Unlock()
-		if len(episodeTitles) == 0 && malID > 0 {
-			jikanEpisodes, err := jikanClient.GetEpisodes(ctx, malID)
-			if err == nil && len(jikanEpisodes) > 0 {
-				episodeTitles = make([]string, len(jikanEpisodes))
-				for i, ep := range jikanEpisodes {
-					episodeTitles[i] = ep.Title
+
+		// The titles fetch is the follow-up: the episode list renders while
+		// Jikan is still running, and the bar moves to 0.7 at the first
+		// message. If titles are already cached, skip the Jikan call.
+		var titleFetch tea.Cmd
+		if len(titles) == 0 && malID > 0 {
+			titleFetch = func() tea.Msg {
+				tctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				jikanEpisodes, err := jikanClient.GetEpisodes(tctx, malID)
+				if err != nil || len(jikanEpisodes) == 0 {
+					return EpisodeTitlesLoadedMsg{Index: searchSelected, Titles: nil}
 				}
+				epTitles := make([]string, len(jikanEpisodes))
+				for i, ep := range jikanEpisodes {
+					epTitles[i] = ep.Title
+				}
+				return EpisodeTitlesLoadedMsg{Index: searchSelected, Titles: epTitles}
 			}
 		}
 
-		return EpisodesLoadedMsg{Episodes: epList, EpisodeTitles: episodeTitles, Error: nil}
+		return EpisodesLoadedMsg{
+			Episodes:      epList,
+			EpisodeTitles: titles,
+			Error:         nil,
+			MALID:         malID,
+			FollowUp:      titleFetch,
+		}
 	}
 }
 
@@ -480,28 +902,24 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 	}
 }
 
-func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID int) tea.Cmd {
+func (m *SearchModel) playEpisode(anime *source.Anime, episodeNum string) tea.Cmd {
 	translationType := m.searchState.TranslationType
 	if translationType == "" {
 		translationType = "sub"
 	}
-	allanimeProvider := m.allanimeProvider
+	hianimeProvider := m.hianimeProvider
 	aniskipEnabled := m.settingsState.AniskipEnabled
 	quality := m.settingsState.Quality
+	animeTitle := ""
+	if anime != nil {
+		animeTitle = anime.Name
+	}
 
 	return func() tea.Msg {
-		allanimeProvider.SetTranslation(translationType)
-
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
-		episode := &source.Episode{
-			Number: episodeNumFloat,
-			Anime: &source.Anime{
-				AllAnimeID: showID,
-				Name:       animeTitle,
-			},
-		}
 
-		streams, err := allanimeProvider.StreamsOf(episode)
+		hianimeProvider.SetTranslation(translationType)
+		streams, err := hianimeProvider.StreamsOf(&source.Episode{Number: episodeNumFloat, Anime: anime})
 		if err != nil {
 			return TUIErrorMsg{Err: fmt.Errorf("failed to get streams: %w", err)}
 		}
@@ -511,9 +929,9 @@ func (m *SearchModel) playEpisode(showID, episodeNum, animeTitle string, malID i
 		}
 
 		var skipTimes []aniskip.SkipInterval
-		if aniskipEnabled && malID > 0 {
+		if aniskipEnabled && anime != nil && anime.MALID > 0 {
 			epNum, _ := strconv.Atoi(episodeNum)
-			if times, err := aniskip.GetSkipTimes(malID, epNum); err == nil {
+			if times, err := aniskip.GetSkipTimes(anime.MALID, epNum); err == nil {
 				skipTimes = times
 			}
 		}
@@ -689,6 +1107,38 @@ func doAniListLogout() tea.Cmd {
 	}
 }
 
+// checkForUpdateCmd checks GitHub for the latest release and returns the version.
+func checkForUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		release, err := update.CheckForUpdate(ctx)
+		if err != nil {
+			return UpdateCheckMsg{Err: err}
+		}
+		return UpdateCheckMsg{LatestVersion: release.TagName}
+	}
+}
+
+// doSelfUpdateCmd downloads and installs the latest release.
+func doSelfUpdateCmd(latestVersion string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		release, err := update.CheckForUpdate(ctx)
+		if err != nil {
+			return UpdateCompleteMsg{Err: fmt.Errorf("failed to fetch release: %w", err)}
+		}
+
+		if err := update.PerformUpdate(ctx, release); err != nil {
+			return UpdateCompleteMsg{Err: err}
+		}
+		return UpdateCompleteMsg{}
+	}
+}
+
 func matchScore(name, query string) int {
 	if name == query {
 		return 4
@@ -725,12 +1175,17 @@ func stripHTML(s string) string {
 }
 
 func truncateSynopsis(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	lastSpace := strings.LastIndex(s[:maxLen], " ")
+	cut := string(runes[:maxLen])
+	lastSpace := strings.LastIndex(cut, " ")
 	if lastSpace == -1 {
-		return s[:maxLen] + "..."
+		return cut + "..."
 	}
-	return s[:lastSpace] + "..."
+	return cut[:lastSpace] + "..."
 }

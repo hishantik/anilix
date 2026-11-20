@@ -33,27 +33,35 @@ type BatchMediaResponse struct {
 // Media data from AniList
 
 type MediaData struct {
-	ID          int          `json:"id"`
-	Title       Title        `json:"title"`
-	CoverImage  CoverImage   `json:"coverImage"`
-	Type        string       `json:"type"`
-	Format      string       `json:"format"`
-	Status      string       `json:"status"`
-	Description string       `json:"description"`
-	StartDate   FuzzyDate    `json:"startDate"`
-	EndDate     FuzzyDate    `json:"endDate"`
-	Season      string       `json:"season"`
-	SeasonYear  int          `json:"seasonYear"`
-	Episodes    int          `json:"episodes"`
-	Duration    int          `json:"duration"`
-	Genres      []string     `json:"genres"`
-	Synonyms    []string     `json:"synonyms"`
-	AverageScore int         `json:"averageScore"`
-	MeanScore   int          `json:"meanScore"`
-	Popularity  int          `json:"popularity"`
-	Trending    int          `json:"trending"`
-	Favourites  int          `json:"favourites"`
-	SiteURL     string       `json:"siteUrl"`
+	ID           int        `json:"id"`
+	IDMal        int        `json:"idMal"`
+	Title        Title      `json:"title"`
+	CoverImage   CoverImage `json:"coverImage"`
+	Type         string     `json:"type"`
+	Format       string     `json:"format"`
+	Status       string     `json:"status"`
+	Description  string     `json:"description"`
+	StartDate    FuzzyDate  `json:"startDate"`
+	EndDate      FuzzyDate  `json:"endDate"`
+	Season       string     `json:"season"`
+	SeasonYear   int        `json:"seasonYear"`
+	Episodes     int        `json:"episodes"`
+	Duration     int        `json:"duration"`
+	Genres       []string   `json:"genres"`
+	Synonyms     []string   `json:"synonyms"`
+	AverageScore int        `json:"averageScore"`
+	MeanScore    int        `json:"meanScore"`
+	Popularity   int        `json:"popularity"`
+	Trending     int        `json:"trending"`
+	Favourites   int        `json:"favourites"`
+	SiteURL      string     `json:"siteUrl"`
+}
+
+// TitleMatch is the result of resolving one search title to an AniList entry.
+// Media is nil when no entry matched the title exactly.
+type TitleMatch struct {
+	Query string
+	Media *MediaData
 }
 
 type Title struct {
@@ -95,6 +103,44 @@ type MediaListEntry struct {
 	ID       int    `json:"id"`
 	Status   string `json:"status"`
 	Progress int    `json:"progress"`
+}
+
+// WatchlistEntry is one saved anime of the user's list, flattened to the
+// fields the watchlist screen shows.
+type WatchlistEntry struct {
+	AniListID int
+	Title     string
+	Cover     string
+	Status    string  // the list status: CURRENT, PLANNING, COMPLETED, ...
+	Progress  int     // episodes the user marked as watched
+	Total     int     // total episodes, zero when unknown
+	Year      int     // season year, zero when unknown
+	Score     float64 // the average score out of ten, zero when unknown
+	Format    string  // TV, MOVIE, OVA, ...
+}
+
+// MediaListCollectionEntry is one entry of one list of the collection.
+type MediaListCollectionEntry struct {
+	Status   string    `json:"status"`
+	Progress int       `json:"progress"`
+	Media    MediaData `json:"media"`
+}
+
+// MediaListGroup is one named list of the collection, e.g. "Watching".
+type MediaListGroup struct {
+	Name    string                     `json:"name"`
+	Entries []MediaListCollectionEntry `json:"entries"`
+}
+
+// MediaListCollection is the anime list collection of a user.
+type MediaListCollection struct {
+	Lists []MediaListGroup `json:"lists"`
+}
+
+type MediaListCollectionResponse struct {
+	Data struct {
+		MediaListCollection MediaListCollection `json:"MediaListCollection"`
+	} `json:"data"`
 }
 
 type MediaListResponse struct {

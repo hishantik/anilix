@@ -9,10 +9,14 @@ import (
 
 	"github.com/hishantik/anilix/auth"
 	"github.com/hishantik/anilix/config"
-	allanime "github.com/hishantik/anilix/provider/allanime"
 	"github.com/hishantik/anilix/provider/anilist"
+	"github.com/hishantik/anilix/provider/hianime"
 	"github.com/hishantik/anilix/provider/jikan"
+	"github.com/hishantik/anilix/provider/kitsu"
 	"github.com/hishantik/anilix/source"
+	"github.com/hishantik/anilix/tui/theme"
+	"github.com/hishantik/anilix/update"
+	"github.com/hishantik/anilix/version"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -22,6 +26,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type SearchModel struct {
@@ -39,13 +45,26 @@ type SearchModel struct {
 	searchList  list.Model
 	episodeList list.Model
 
-	allanimeClient   *allanime.AllanimeClient
-	jikanClient      *jikan.JikanClient
-	anilistClient    *anilist.Client
-	allanimeProvider *allanime.AllanimeProvider
+	// searchDelegate and episodeDelegate draw the rows of the two lists.
+	// They are kept as pointers because they carry the focus state of the
+	// list they belong to.
+	searchDelegate  *resultDelegate
+	episodeDelegate *resultDelegate
+
+	jikanClient     *jikan.JikanClient
+	anilistClient   *anilist.Client
+	kitsuClient     *kitsu.Client
+	hianimeProvider *hianime.Provider
 
 	prevState     tuiState
 	confirmSelect int
+
+	// backStack holds the screens behind the current one.
+	//
+	// The escape key always returns to the view the user came from: the
+	// results, the details of an entry and its episodes are three steps of
+	// the same walk.
+	backStack []tuiState
 
 	settingsState *SettingsState
 
@@ -55,10 +74,21 @@ type SearchModel struct {
 	width  int
 	height int
 
+	// contentWidth and contentHeight are the dimensions of the content
+	// region inside the application shell. They are smaller than the
+	// terminal when the navigation drawer takes part of the screen.
+	contentWidth  int
+	contentHeight int
+
+	// Navigation drawer
+	nav navState
+
 	progressPercent float64
 
 	prevSearchListIndex  int
 	metadataCache        map[int]*MetadataPanel
+	kitsuAnimeCache      map[int]*kitsu.Anime
+	metadataStale        bool
 	episodeTitlesCache   map[int][]string
 	episodeTitlesCacheMu sync.Mutex
 	episodeMetadataCache map[string]*jikan.Episode
@@ -67,6 +97,47 @@ type SearchModel struct {
 	// Recent searches
 	recentSearches []string
 	recentCursor   int
+
+	// Watch history
+	//
+	// watchHistoryCache is the list the history screen shows; it is read
+	// when the screen opens. pendingShowID steers the results of a
+	// history resume back to the watched entry: the provider searches by
+	// title, and the first result with the remembered id wins.
+	watchHistoryCache []historyEntry
+	pendingShowID     string
+
+	// Watchlist
+	//
+	// watchlist holds the saved list of the account while the screen is
+	// open. watchlistCover* cache the rendered artwork of the selected
+	// entry, and watchlistCoverURL remembers which picture they belong
+	// to: a download that comes back after the cursor moved is dropped.
+	watchlist         *WatchlistState
+	watchlistCover    string
+	watchlistCoverW   int
+	watchlistCoverR   int
+	watchlistCoverURL string
+
+	// Discover
+	//
+	// discover holds trending/popular anime for the discover screen.
+	// discoverCover* cache the rendered artwork of the selected entry,
+	// the same way the watchlist caches its covers.
+	discover       *DiscoverState
+	discoverCover  string
+	discoverCoverW int
+	discoverCoverR int
+	discoverURL    string
+
+	// AniList account screen
+	anilistCursor int // 0 = tracking toggle, 1 = login/logout
+
+	// animeScroll is the scroll offset of the details screen.
+	//
+	// A compact terminal cannot show the whole entry at once, and the
+	// details screen has no list to scroll: the arrow keys move the text.
+	animeScroll int
 
 	progressTarget float64 // where the animation should stop
 
@@ -77,43 +148,63 @@ type SearchModel struct {
 
 	// Kitty graphics
 	kittyImageID uint32 // current image ID in terminal memory, for cleanup
+
+	// Design system showcase
+	themeScroll int
+
+	// Pill switch (SUB / DUB) in the app bar: the character range so a
+	// mouse click on either segment toggles the selected translation.
+	psX1 int // first character column of the filled pill (active option)
+	psX2 int // last character column + 1 (exclusive end)
 }
 
 func NewSearchModel() *SearchModel {
 	ti := textinput.New()
-	ti.Placeholder = "Search anime..."
-	ti.Focus()
-	ti.Prompt = "  "
+	ti.Placeholder = placeholderSearch
+	// The search field is not focused on start: the application opens on
+	// the navigation, and typing a character focuses the field. That also
+	// keeps the menu key ("m") free for the navigation drawer.
+	//
+	// The prompt is empty: the field draws its own icon, so the widget only
+	// renders the value.
+	ti.Prompt = ""
 	ts := textinput.DefaultStyles(true)
-	ts.Focused.Prompt = lipgloss.NewStyle().Foreground(Theme.Primary).Padding(0, 1)
-	ts.Focused.Text = lipgloss.NewStyle().Foreground(Theme.Text)
-	ts.Focused.Placeholder = lipgloss.NewStyle().Foreground(Theme.Faint)
+	ts.Focused.Prompt = theme.Fg(lipgloss.NewStyle(), theme.Primary)
+	ts.Focused.Text = theme.Fg(lipgloss.NewStyle(), theme.Text)
+	ts.Focused.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Muted)
+	ts.Blurred.Prompt = theme.Fg(lipgloss.NewStyle(), theme.Muted)
+	ts.Blurred.Text = theme.Fg(lipgloss.NewStyle(), theme.Muted)
+	ts.Blurred.Placeholder = theme.Fg(lipgloss.NewStyle(), theme.Muted)
 	ti.SetStyles(ts)
 
-	allanimeProvider := allanime.NewAllanimeProvider()
-	allanimeProvider.SetTranslation("sub")
+	translationType := config.GetString("translation_type")
+	if translationType == "" {
+		translationType = "sub"
+	}
+	hianimeProvider := hianime.NewProvider()
+	hianimeProvider.SetTranslation(translationType)
 
 	h := help.New()
 	hs := help.DefaultStyles(true)
-	hs.ShortKey = lipgloss.NewStyle().Foreground(Theme.Primary)
-	hs.ShortDesc = lipgloss.NewStyle().Foreground(Theme.Faint)
-	hs.FullKey = lipgloss.NewStyle().Foreground(Theme.Primary)
-	hs.FullDesc = lipgloss.NewStyle().Foreground(Theme.Faint)
+	hs.ShortKey = theme.Fg(lipgloss.NewStyle().Bold(true), theme.Primary)
+	hs.ShortDesc = theme.Fg(lipgloss.NewStyle(), theme.Muted)
+	hs.FullKey = theme.Fg(lipgloss.NewStyle().Bold(true), theme.Primary)
+	hs.FullDesc = theme.Fg(lipgloss.NewStyle(), theme.Muted)
 	h.Styles = hs
 
 	km := newKeymap()
 
 	s := spinner.New()
 	s.Spinner = spinner.Points
-	s.Style = lipgloss.NewStyle().Foreground(Theme.Primary)
+	s.Style = theme.Fg(lipgloss.NewStyle(), theme.Primary)
 
-	p := progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
-	p.SetWidth(40)
+	searchDelegate := &resultDelegate{focused: true}
+	episodeDelegate := &resultDelegate{focused: true}
 
 	return &SearchModel{
-		state:            searchState,
-		searchState:      NewSearchState(),
-		episodeState:     NewEpisodeState(),
+		state:        searchState,
+		searchState:  NewSearchState(),
+		episodeState: NewEpisodeState(),
 		settingsState: &SettingsState{
 			Quality: func() string {
 				q := config.GetString("quality")
@@ -128,40 +219,120 @@ func NewSearchModel() *SearchModel {
 		help:                 h,
 		keymap:               km,
 		loading:              s,
-		progress:             p,
-		searchList:           makeSearchList(km),
-		episodeList:          makeEpisodeList(km),
-		allanimeClient:       allanime.NewAllanimeClient(),
+		progress:             newProgress(),
+		searchList:           makeSearchList(km, searchDelegate),
+		episodeList:          makeEpisodeList(km, episodeDelegate),
+		searchDelegate:       searchDelegate,
+		episodeDelegate:      episodeDelegate,
 		jikanClient:          jikan.NewClient("https://api.jikan.moe/v4"),
 		anilistClient:        anilist.NewClient(),
-		allanimeProvider:     allanimeProvider,
+		kitsuClient:          kitsu.NewClient(),
+		hianimeProvider:      hianimeProvider,
 		lastQuery:            "",
 		metadataCache:        make(map[int]*MetadataPanel),
+		kitsuAnimeCache:      make(map[int]*kitsu.Anime),
 		episodeTitlesCache:   make(map[int][]string),
 		episodeMetadataCache: make(map[string]*jikan.Episode),
 		recentSearches:       loadRecentSearches(),
+		watchlist:            &WatchlistState{},
+		discover:             &DiscoverState{Section: "trending"},
 		trackingEnabled:      config.GetBool("anilist.tracking.enabled") && config.GetString("anilist.token") != "",
 		anilistToken:         config.GetString("anilist.token"),
 		anilistUsername:      config.GetString("anilist.username"),
+		nav:                  navState{expanded: config.GetString("ui.sidebar") != "collapsed", cursor: navIndexOf(navSearch)},
 	}
 }
 
+// newProgress builds the progress bar of the shell.
+//
+// The bar is drawn in the accent colours of the design system: the filled
+// part is the primary colour, the empty part the secondary one.
+func newProgress() progress.Model {
+	p := progress.New(
+		progress.WithColors(roleColor(theme.Primary), roleColor(theme.Secondary)),
+		progress.WithScaled(true),
+	)
+	p.SetWidth(40)
+	return p
+}
+
 func (m *SearchModel) Init() tea.Cmd {
-	return nil
+	// Ask the terminal about its capabilities; the answer is recorded by
+	// HandlePrimaryDeviceAttributes. A terminal that does not answer
+	// simply keeps the renderers the environment already proves.
+	return tea.Raw(ansi.RequestPrimaryDeviceAttributes)
+}
+
+// loadingActive reports whether any screen the loading spinner represents
+// is currently in flight. When none is, the spinner's tick chain is left
+// to die so an idle UI is not re-rendered several times a second for a
+// hidden frame; the chain is re-seeded whenever a load starts.
+func (m *SearchModel) loadingActive() bool {
+	if m.searchState.Loading || m.searchState.MetadataLoading {
+		return true
+	}
+	if m.episodeState.Loading || m.episodeState.MetadataLoading || m.episodeState.Playing {
+		return true
+	}
+	s := m.settingsState.UpdateStatus
+	return s == "checking" || s == "updating"
 }
 
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.resize(msg.Width, msg.Height)
+	case uv.PrimaryDeviceAttributesEvent:
+		// The terminal answered the capability query. Device attributes
+		// are no longer used to pick a renderer, so the answer is ignored.
+		// When it would change the chain, the artwork on screen would be
+		// redrawn with the better protocol.
+		if HandlePrimaryDeviceAttributes(msg) {
+			return m, m.refreshCoverForProtocolChange()
+		}
 		return m, nil
+
+	case tea.WindowSizeMsg:
+		// Crossing the width threshold switches the drawer between its
+		// persistent and its modal form. The modal drawer is closed on the
+		// way: a drawer that opens by itself covers the screen the user
+		// just resized.
+		wasPersistent := m.navPersistent()
+		m.resize(msg.Width, msg.Height)
+		if wasPersistent != m.navPersistent() {
+			m.nav.overlay = false
+			m.nav.focused = false
+			m.nav.contentInputFocus = false
+		}
+		// The cover was rendered for the size of the panel it lives in: a
+		// resize asks for a new one. The ask is free when the size did not
+		// change - ensureCover renders only a missing or mis-sized cover.
+		return m, m.coverCmd()
+
+	case tea.MouseMsg:
+		// A click on the SUB/DUB pill switch toggles the translation.
+		if msg, ok := msg.(tea.MouseClickMsg); ok && msg.Y == 0 {
+			if m.pillSwitchClicked(msg.X) {
+				m.toggleTranslation()
+			}
+			return m, nil
+		}
+		// A click on a recent search row re-runs that query. recentSearchAt
+		// maps the content row (the app bar is row 0) onto the list.
+		if msg, ok := msg.(tea.MouseClickMsg); ok {
+			if click := m.recentSearchAt(msg.Y - 1); click >= 0 && click < len(m.recentSearches) {
+				return m.selectRecentSearch(click)
+			}
+		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.loading, cmd = m.loading.Update(msg)
-		cmds = append(cmds, cmd)
+		// Advance the chain only while a load is in flight: an idle UI
+		// would otherwise repaint for a spinner nobody sees.
+		if m.loadingActive() {
+			cmds = append(cmds, cmd)
+		}
 
 	case progressTickMsg:
 		// Smoothly animate towards target
@@ -178,6 +349,39 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// The design system showcase is reachable from every screen, even
+		// while a text input has the focus: without this the key would be
+		// typed into the search box.
+		if m.state != themeState && key.Matches(msg, m.keymap.Theme) {
+			m.prevState = m.state
+			m.themeScroll = 0
+			m.state = themeState
+			return m, nil
+		}
+
+		// The navigation drawer owns the keyboard while it is open.
+		if m.navHasFocus() {
+			return m.handleNavKey(msg)
+		}
+
+		// The menu key. The drawer is opened with ctrl+m.
+		if key.Matches(msg, m.keymap.Menu) && !m.textInput.Focused() {
+			m.toggleDrawer()
+			return m, nil
+		}
+
+		if m.state == historyState {
+			return m.handleHistoryKey(msg)
+		}
+
+		if m.state == watchlistState {
+			return m.handleWatchlistKey(msg)
+		}
+
+		if m.state == discoverState {
+			return m.handleDiscoverKey(msg)
+		}
+
 		if m.state == searchState && m.textInput.Focused() {
 			switch {
 			case key.Matches(msg, m.keymap.Quit):
@@ -194,19 +398,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keymap.Select):
 				// If recent searches are showing and cursor is on one, use it
 				if m.textInput.Value() == "" && len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 && m.recentCursor < len(m.recentSearches) {
-					query := m.recentSearches[m.recentCursor]
-					m.textInput.SetValue(query)
-					m.lastQuery = query
-					m.searchState.Query = query
-					m.searchState.Loading = true
-					m.progressPercent = 0
-					m.progressTarget = 0.3
-					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
-					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-						return progressTickMsg{}
-					}))
-					return m, tea.Batch(cmds...)
+					return m.selectRecentSearch(m.recentCursor)
 				}
 				query := m.textInput.Value()
 				if len(query) >= 2 {
@@ -216,7 +408,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.progressPercent = 0
 					m.progressTarget = 0.3
 					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
+					cmds = append(cmds, m.doSearch(query), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -231,6 +423,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.searchState.TranslationType = "sub"
 				}
+				config.Set("translation_type", m.searchState.TranslationType)
 				return m, nil
 			case key.Matches(msg, m.keymap.Settings):
 				m.prevState = m.state
@@ -278,46 +471,26 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsState.Cursor--
 				}
 			case "down", "j":
-				if m.settingsState.Cursor < 2 {
+				if m.settingsState.Cursor < settingsRowCount-1 {
 					m.settingsState.Cursor++
 				}
 			case "left", "h", "right", "l":
-				if m.settingsState.Cursor == 0 {
-					qualities := []string{"best", "1080p", "720p", "480p", "360p", "auto"}
-					idx := 0
-					for i, q := range qualities {
-						if q == m.settingsState.Quality {
-							idx = i
-							break
-						}
-					}
-					if msg.String() == "left" || msg.String() == "h" {
-						idx = (idx - 1 + len(qualities)) % len(qualities)
-					} else {
-						idx = (idx + 1) % len(qualities)
-					}
-					m.settingsState.Quality = qualities[idx]
-					config.Set("quality", m.settingsState.Quality)
-				} else if m.settingsState.Cursor == 1 {
-					m.settingsState.AniskipEnabled = !m.settingsState.AniskipEnabled
-					config.Set("aniskip.enabled", m.settingsState.AniskipEnabled)
-				}
+				m.settingsAdjust(msg.String() == "left" || msg.String() == "h")
 			case "enter":
-				if m.settingsState.Cursor == 2 {
-					if auth.IsLoggedIn() {
-						// Logout immediately
-						auth.Quiet = true
-						err := auth.Logout()
-						auth.Quiet = false
-						if err == nil {
-							m.trackingEnabled = false
-							m.anilistToken = ""
-							m.anilistUsername = ""
-						}
-					} else {
-						// Start OAuth login flow
-						m.state = anilistLoginState
-						return m, doAniListLogin()
+				switch m.settingsState.Cursor {
+				case settingsRowAniList:
+					m.state = anilistState
+					m.anilistCursor = aniListStartCursor()
+					return m, nil
+				case settingsRowUpdate:
+					if m.settingsState.UpdateStatus == "" || m.settingsState.UpdateStatus == "error" {
+						m.settingsState.UpdateStatus = "checking"
+						m.settingsState.UpdateError = nil
+						return m, tea.Batch(checkForUpdateCmd(), m.loading.Tick)
+					} else if m.settingsState.UpdateStatus == "available" {
+						m.settingsState.UpdateStatus = "updating"
+						m.settingsState.UpdateError = nil
+						return m, tea.Batch(doSelfUpdateCmd(m.settingsState.UpdateVersion), m.loading.Tick)
 					}
 				}
 			case "esc":
@@ -327,21 +500,143 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.state == anilistLoginState {
-			switch msg.String() {
-			case "esc":
-				m.state = settingsState
+		if m.state == anilistState {
+			switch {
+			case key.Matches(msg, m.keymap.Quit):
+				m.prevState = m.state
+				m.confirmSelect = 1
+				m.state = confirmQuitState
+				return m, nil
+
+			case key.Matches(msg, m.keymap.Back):
+				m.state = m.prevState
+				return m, nil
+
+			case key.Matches(msg, m.keymap.Up), key.Matches(msg, m.keymap.Down):
+				if !auth.IsLoggedIn() {
+					// The tracking row exists only for a connected
+					// account: the cursor never rests on a missing row.
+					m.anilistCursor = 1
+					return m, nil
+				}
+				if m.anilistCursor != 1 {
+					m.anilistCursor = 1
+				}
+				return m, nil
+
+			case key.Matches(msg, m.keymap.Select):
+				switch m.anilistCursor {
+				case 0:
+					if !auth.IsLoggedIn() {
+						m.anilistCursor = 1
+						return m, nil
+					}
+					// The tracking switch is a real setting: it decides
+					// whether a played episode is pushed to AniList.
+					on := !config.GetBool("anilist.tracking.enabled")
+					config.Set("anilist.tracking.enabled", on)
+					m.trackingEnabled = on && m.anilistToken != ""
+				case 1:
+					if auth.IsLoggedIn() {
+						m.prevState = m.state
+						m.confirmSelect = 1
+						m.state = confirmLogoutState
+						return m, nil
+					}
+					m.state = anilistLoginState
+					return m, doAniListLogin()
+				}
 				return m, nil
 			}
 			return m, nil
 		}
 
+		if m.state == confirmLogoutState {
+			if key.Matches(msg, m.keymap.Toggle) {
+				m.toggleTranslation()
+				return m, nil
+			}
+			switch msg.String() {
+			case "y", "enter":
+				if m.confirmSelect == 0 {
+					auth.Quiet = true
+					err := auth.Logout()
+					auth.Quiet = false
+					if err == nil {
+						m.trackingEnabled = false
+						m.anilistToken = ""
+						m.anilistUsername = ""
+					}
+				}
+				m.state = anilistState
+				m.anilistCursor = 1
+				return m, nil
+			case "n", "esc":
+				m.state = anilistState
+				m.anilistCursor = 1
+				return m, nil
+			case "left", "right", "h", "l", "up", "k", "down", "j":
+				if m.confirmSelect == 0 {
+					m.confirmSelect = 1
+				} else {
+					m.confirmSelect = 0
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+
+		if m.state == anilistLoginState {
+			switch msg.String() {
+			case "esc":
+				m.state = m.prevState
+				return m, nil
+			}
+			return m, nil
+		}
+
+		if m.state == themeState {
+			switch msg.String() {
+			case "esc":
+				m.state = m.prevState
+				m.themeScroll = 0
+				return m, nil
+			case "up", "k":
+				if m.themeScroll > 0 {
+					m.themeScroll--
+				}
+				return m, nil
+			case "down", "j":
+				m.themeScroll++
+				return m, nil
+			case "home", "g":
+				m.themeScroll = 0
+				return m, nil
+			case "end", "G":
+				m.themeScroll = 1 << 20
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		if m.state == confirmQuitState {
+			if key.Matches(msg, m.keymap.Toggle) {
+				m.toggleTranslation()
+				return m, nil
+			}
 			switch msg.String() {
 			case "left", "h":
 				m.confirmSelect = 0
 			case "right", "l":
 				m.confirmSelect = 1
+			case "up", "k", "down", "j":
+				if m.confirmSelect == 0 {
+					m.confirmSelect = 1
+				} else {
+					m.confirmSelect = 0
+				}
 			case "enter":
 				if m.confirmSelect == 0 {
 					return m, tea.Quit
@@ -365,31 +660,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keymap.Back):
-			if m.state == detailState {
-				m.state = searchState
-				m.episodeState = NewEpisodeState()
-				m.textInput.Placeholder = "Type to search..."
-				if m.kittyImageID != 0 {
-					id := m.kittyImageID
-					m.kittyImageID = 0
-					return m, DeleteKittyImageCmd(id)
-				}
-				return m, nil
+			switch m.state {
+			case animeState, detailState:
+				return m, m.goBack()
 			}
 
 		case key.Matches(msg, m.keymap.Search):
-			if m.state == detailState {
-				m.state = searchState
-				m.episodeState = NewEpisodeState()
-				if m.kittyImageID != 0 {
-					id := m.kittyImageID
-					m.kittyImageID = 0
-					return m, tea.Batch(DeleteKittyImageCmd(id), nil)
-				}
-			}
-			m.textInput.Focus()
-			m.textInput.SetValue(m.lastQuery)
-			return m, nil
+			return m, m.gotoSearch()
 
 		case key.Matches(msg, m.keymap.Toggle):
 			if m.searchState.TranslationType == "sub" {
@@ -397,6 +674,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.searchState.TranslationType = "sub"
 			}
+			config.Set("translation_type", m.searchState.TranslationType)
 
 			if m.state == detailState && m.episodeState.AnimeID != "" {
 				m.episodeState.Loading = true
@@ -404,7 +682,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.progressTarget = 0.4
 				selectedAnime := m.searchState.Results[m.searchState.Selected]
 				if selectedAnime != nil {
-					cmds = append(cmds, m.fetchEpisodes(m.episodeState.AnimeID, selectedAnime.MALID))
+					cmds = append(cmds, m.fetchEpisodes(selectedAnime), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -413,10 +691,41 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchState.Loading = true
 				m.progressPercent = 0
 				m.progressTarget = 0.3
-				cmds = append(cmds, m.doSearch(m.lastQuery))
+				cmds = append(cmds, m.doSearch(m.lastQuery), m.loading.Tick)
 				cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 					return progressTickMsg{}
 				}))
+			}
+
+		case key.Matches(msg, m.keymap.Retry):
+			// The error states advertise ctrl+r: it re-runs the request
+			// that failed instead of leaving the user to retype a query.
+			switch m.state {
+			case searchState:
+				if m.lastQuery != "" {
+					m.searchState.Loading = true
+					m.searchState.Err = nil
+					m.progressPercent = 0
+					m.progressTarget = 0.3
+					cmds = append(cmds, m.doSearch(m.lastQuery), m.loading.Tick)
+					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+						return progressTickMsg{}
+					}))
+				}
+			case detailState:
+				if m.searchState.Selected < len(m.searchState.Results) {
+					selectedAnime := m.searchState.Results[m.searchState.Selected]
+					if selectedAnime != nil && m.episodeState.AnimeID != "" {
+						m.episodeState.Loading = true
+						m.episodeState.Err = nil
+						m.progressPercent = 0
+						m.progressTarget = 0.4
+						cmds = append(cmds, m.fetchEpisodes(selectedAnime), m.loading.Tick)
+						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+							return progressTickMsg{}
+						}))
+					}
+				}
 			}
 
 		case key.Matches(msg, m.keymap.Settings):
@@ -425,33 +734,31 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keymap.Select):
-			if m.state == searchState {
-				m.searchState.Selected = m.searchList.Index()
-				if len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
-					anime := m.searchState.Results[m.searchState.Selected]
-					if anime.AllAnimeID != "" {
-						m.state = detailState
-						m.textInput.Placeholder = "Search episode..."
-						m.episodeState.AnimeID = anime.AllAnimeID
-						m.episodeState.Loading = true
-						m.progressPercent = 0
-						m.progressTarget = 0.4
-						cmds = append(cmds, m.fetchEpisodes(anime.AllAnimeID, anime.MALID))
-						cmds = append(cmds, m.fetchTrackingStatusCmd(anime.AniListID))
-						cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-							return progressTickMsg{}
-						}))
-					}
+			switch m.state {
+			case searchState:
+				// If recent searches are showing, Enter re-runs the cursor
+				// query. openSelectedAnime needs results; it returns nil when
+				// results are absent and silently consumes the key.
+				if len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 && m.recentCursor < len(m.recentSearches) {
+					return m.selectRecentSearch(m.recentCursor)
 				}
-			} else if m.state == detailState {
+				return m, m.openSelectedAnime()
+
+			case animeState:
+				return m, m.openEpisodes()
+
+			case detailState:
 				m.episodeState.Selected = m.episodeList.Index()
 				if len(m.episodeState.Episodes) > 0 && m.episodeState.Selected < len(m.episodeState.Episodes) {
 					selectedAnime := m.searchState.Results[m.searchState.Selected]
 					selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
+					// The history answers "what was I watching?": every
+					// playback writes one row, newest first.
+					recordWatch(selectedAnime.Name, selectedAnime.ShowID, selectedEpisode)
 					m.episodeState.Playing = true
 					m.progressPercent = 0
 					m.progressTarget = 0.5
-					cmds = append(cmds, m.playEpisode(selectedAnime.AllAnimeID, selectedEpisode, selectedAnime.Name, selectedAnime.MALID))
+					cmds = append(cmds, m.playEpisode(selectedAnime, selectedEpisode), m.loading.Tick)
 					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 						return progressTickMsg{}
 					}))
@@ -460,10 +767,27 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// The details screen has no list: the arrow keys scroll the text.
+		if m.state == animeState {
+			switch msg.String() {
+			case "up", "k":
+				if m.animeScroll > 0 {
+					m.animeScroll--
+				}
+				return m, nil
+			case "down", "j":
+				m.animeScroll++
+				return m, nil
+			case "home", "g":
+				m.animeScroll = 0
+				return m, nil
+			}
+		}
+
 		// Typing printable characters (not list nav keys) refocuses search bar
 		keyStr := msg.String()
 		isListNav := keyStr == "g" || keyStr == "G" || keyStr == "j" || keyStr == "k"
-		if m.state == searchState && !m.textInput.Focused() && len(m.searchState.Results) > 0 && len(keyStr) == 1 && !isListNav {
+		if m.state == searchState && !m.textInput.Focused() && len(keyStr) == 1 && !isListNav {
 			m.textInput.Focus()
 			m.textInput.SetValue("")
 			var cmd tea.Cmd
@@ -484,15 +808,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if meta, ok := m.metadataCache[m.searchList.Index()]; ok {
 					m.searchState.Metadata = meta
 					m.searchState.MetadataLoading = false
-					// Trigger cover download if not already loaded
-					if meta.Cover != "" && meta.CoverImage == "" {
-						leftW, _, _, _ := detailLayout(m.width, m.height)
-						cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchList.Index(), (m.height-4)*3/4))
-					}
+					cmds = append(cmds, m.coverCmd())
 				} else {
 					// Not cached (AniList batch may not have covered this one) — fetch individually
 					m.searchState.MetadataLoading = true
-					cmds = append(cmds, m.fetchMetadata())
+					cmds = append(cmds, m.fetchMetadata(), m.loading.Tick)
 				}
 			}
 		} else if m.state == searchState && !m.textInput.Focused() && len(m.searchState.Results) == 0 && len(m.recentSearches) > 0 {
@@ -507,21 +827,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.recentCursor++
 				}
 			case key.Matches(msg, m.keymap.Select):
-				if m.recentCursor < len(m.recentSearches) {
-					query := m.recentSearches[m.recentCursor]
-					m.textInput.SetValue(query)
-					m.lastQuery = query
-					m.searchState.Query = query
-					m.searchState.Loading = true
-					m.progressPercent = 0
-					m.progressTarget = 0.3
-					m.textInput.Blur()
-					cmds = append(cmds, m.doSearch(query))
-					cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
-						return progressTickMsg{}
-					}))
-					return m, tea.Batch(cmds...)
-				}
+				return m.selectRecentSearch(m.recentCursor)
 			case key.Matches(msg, m.keymap.Back):
 				// Esc from recent searches focuses the search bar
 				m.textInput.Focus()
@@ -555,6 +861,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case SearchResultsMsg:
+		// A slower old search must not overwrite the results of a newer
+		// one: drop responses that no longer match what is on screen.
+		if msg.Query != m.lastQuery {
+			break
+		}
 		m.searchState.Results = msg.Results
 		m.searchState.Loading = false
 		m.progressTarget = 0.6 // search done, metadata still loading
@@ -564,38 +875,132 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeTitlesCache = make(map[int][]string)
 		m.episodeTitlesCacheMu.Unlock()
 		m.metadataCache = make(map[int]*MetadataPanel)
-		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
+		m.kitsuAnimeCache = make(map[int]*kitsu.Anime)
+		m.metadataStale = false
+		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
+		// A resume from the history steers the results back to the watched
+		// entry: the provider searched by title, and the first result with
+		// the remembered streaming id wins.
+		if m.pendingShowID != "" {
+			for i, anime := range m.searchState.Results {
+				if anime.ShowID == m.pendingShowID {
+					m.searchState.Selected = i
+					break
+				}
+			}
+			m.pendingShowID = ""
+		}
 		// Resize list to two-column layout now that results are available
 		m.resize(m.width, m.height)
 		if len(msg.Results) > 0 {
 			saveRecentSearch(m.lastQuery)
 			m.recentSearches = loadRecentSearches()
-			// Batch-fetch ALL metadata in one API call
-			m.searchState.MetadataLoading = true
-			m.loading = spinner.New()
-			m.loading.Spinner = spinner.Points
-			m.loading.Style = lipgloss.NewStyle().Foreground(Theme.Primary)
-			cmds = append(cmds, m.loading.Tick)
-			cmds = append(cmds, m.fetchMetadataBatch(msg.Results))
+			// Resolve AniList/MAL IDs in the background, then batch-fetch the
+			// metadata for all results in a single API call. The Kitsu
+			// resolver runs alongside and fills AniList/MAL IDs Kitsu knows
+			// and AniList did not, enabling AniSkip even for titles AniList
+			// lists under a different name.
+			cmds = append(cmds, m.resolveIDs(msg.Results))
+			cmds = append(cmds, m.resolveIDsViaKitsu(msg.Results))
 		}
 		m.updateSearchList()
 
+	case IDsResolvedMsg:
+		// Apply the AniList ids on the UI thread (the resolver goroutine
+		// must not mutate the results the renderer reads), then the
+		// metadata batch can run.
+		for idx, ids := range msg.IDs {
+			if idx < 0 || idx >= len(m.searchState.Results) {
+				continue
+			}
+			m.searchState.Results[idx].AniListID = ids.AniListID
+			if ids.MALID > 0 {
+				m.searchState.Results[idx].MALID = ids.MALID
+			}
+		}
+		if len(m.searchState.Results) > 0 {
+			m.searchState.MetadataLoading = true
+			m.loading = spinner.New()
+			m.loading.Spinner = spinner.Points
+			m.loading.Style = theme.Fg(lipgloss.NewStyle(), theme.Primary)
+			cmds = append(cmds, m.loading.Tick)
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
+		}
+
+	case MALIDsResolvedMsg:
+		// Apply the Kitsu IDs on the UI thread, but only where the
+		// AniList resolution did not already provide them. Kitsu returns
+		// both AniList and MAL ids, so both fields are patched. The Kitsu
+		// entries are kept as the metadata fallback for movies and OVAs
+		// AniList does not know by id.
+		for idx, ids := range msg.IDs {
+			if idx < 0 || idx >= len(m.searchState.Results) {
+				continue
+			}
+			if m.searchState.Results[idx].AniListID == 0 {
+				m.searchState.Results[idx].AniListID = ids.AniListID
+			}
+			if m.searchState.Results[idx].MALID == 0 {
+				m.searchState.Results[idx].MALID = ids.MALID
+			}
+		}
+		for idx, anime := range msg.Animes {
+			m.kitsuAnimeCache[idx] = anime
+		}
+		// The first batch ran with whatever ids AniList resolved; the ids
+		// Kitsu just added may cover entries it skipped. Fetch those once
+		// the running batch is done, so the two passes never overlap.
+		if m.searchState.MetadataLoading {
+			m.metadataStale = true
+		} else if m.hasUncachedResults() {
+			// The pass runs quietly: the list fills in when it returns,
+			// no spinner is needed for the few entries it covers.
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
+		}
+
+	case MetadataProgressMsg:
+		// A tier of the metadata batch is done: ease the bar toward the
+		// next target while the remaining tiers run.
+		m.progressTarget = msg.Target
+
 	case MetadataBatchLoadedMsg:
-		// Cache all metadata from the batch result
+		// Cache all metadata from the batch result; an entry already in
+		// the cache was richer (AniList/Jikan/Kitsu) and is not downgraded
+		// by the Kitsu or hianime fallback that a rerun may carry. The
+		// hianime placeholder is provisional and is upgraded by any real
+		// source.
 		for idx, meta := range msg.MetadataMap {
+			if meta == nil {
+				continue
+			}
+			if m.hasRealMetadata(idx) {
+				continue
+			}
 			m.metadataCache[idx] = meta
 		}
-		m.searchState.MetadataLoading = false
-		m.progressTarget = 1.0
+		if m.metadataStale {
+			// Kitsu IDs arrived while this batch was running: the ids
+			// it added were not in the request. Run one more pass, which
+			// skips everything already cached.
+			m.metadataStale = false
+			cmds = append(cmds, m.fetchMetadataBatch(m.searchState.Results))
+		} else {
+			m.searchState.MetadataLoading = false
+		}
+		// The provider pages are fetched after this batch: their panels
+		// are provisional and must not delay the real ones.
+		if msg.FollowUp != nil {
+			cmds = append(cmds, msg.FollowUp)
+		}
+		m.progressTarget = msg.Target
+		// The rows carry the alternative title and the status of their
+		// entry: the list is rebuilt with what the batch brought.
+		m.updateSearchList()
 		// Show metadata for the currently selected item
 		if meta, ok := m.metadataCache[m.searchState.Selected]; ok {
 			m.searchState.Metadata = meta
-			// Trigger cover image download for the selected item
-			if meta.Cover != "" && meta.CoverImage == "" {
-				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, m.searchState.Selected, (m.height-4)*3/4))
-			}
+			cmds = append(cmds, m.coverCmd())
 		}
 
 	case metadataDebounceMsg:
@@ -604,11 +1009,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if meta, ok := m.metadataCache[msg.Index]; ok {
 				m.searchState.Metadata = meta
 				m.searchState.MetadataLoading = false
-				// Trigger cover download if not already loaded
-				if meta.Cover != "" && meta.CoverImage == "" {
-					leftW, _, _, _ := detailLayout(m.width, m.height)
-					cmds = append(cmds, downloadCoverCmd(meta.Cover, leftW, msg.Index, (m.height-4)*3/4))
-				}
+				cmds = append(cmds, m.coverCmd())
 			}
 			// If not in cache, batch already failed or ID wasn't available
 		}
@@ -619,11 +1020,8 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchState.Metadata = msg.Metadata
 			m.searchState.MetadataLoading = false
 			m.progressTarget = 1.0
-			// Trigger cover image download
-			if msg.Metadata != nil && msg.Metadata.Cover != "" && msg.Metadata.CoverImage == "" {
-				leftW, _, _, _ := detailLayout(m.width, m.height)
-				cmds = append(cmds, downloadCoverCmd(msg.Metadata.Cover, leftW, msg.Index, (m.height-4)*3/4))
-			}
+			m.updateSearchList()
+			cmds = append(cmds, m.coverCmd())
 		}
 
 	case EpisodesLoadedMsg:
@@ -631,21 +1029,43 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeState.EpisodeTitles = msg.EpisodeTitles
 		m.episodeState.Loading = false
 		m.progressTarget = 0.7 // episodes loaded, metadata still loading
-		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
+		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
+		// The provider recovered the MAL id from an embed URL during the
+		// episodes fetch; apply it on the UI thread (AniSkip reads it).
+		if msg.MALID > 0 && m.searchState.Selected < len(m.searchState.Results) {
+			anime := m.searchState.Results[m.searchState.Selected]
+			if anime != nil && anime.MALID == 0 {
+				anime.MALID = msg.MALID
+			}
+		}
 		if msg.Error != nil {
 			m.episodeState.Err = msg.Error
 		}
 		m.updateEpisodeList()
+		// The Jikan titles are the follow-up: they land while the bar runs
+		// to 0.7 and the selected episode's metadata loads.
+		if msg.FollowUp != nil {
+			cmds = append(cmds, msg.FollowUp)
+		}
 		if len(msg.Episodes) > 0 {
 			m.episodeState.MetadataLoading = true
-			cmds = append(cmds, m.fetchEpisodeMetadata())
+			cmds = append(cmds, m.fetchEpisodeMetadata(), m.loading.Tick)
+		}
+
+	case EpisodeTitlesLoadedMsg:
+		// A follow-up answer for another entry is dropped: the titles
+		// belong to the episode list the user is looking at.
+		if msg.Index == m.searchState.Selected && len(msg.Titles) > 0 {
+			m.episodeState.EpisodeTitles = msg.Titles
+			m.episodeTitlesCache[msg.Index] = msg.Titles
+			m.updateEpisodeList()
 		}
 
 	case episodeMetadataDebounceMsg:
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.MetadataLoading = true
-			cmds = append(cmds, m.fetchEpisodeMetadata())
+			cmds = append(cmds, m.fetchEpisodeMetadata(), m.loading.Tick)
 		}
 
 	case EpisodeMetadataFetchTriggered:
@@ -653,6 +1073,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EpisodeMetadataLoadedMsg:
 		if msg.CacheKey != "" && msg.RawEpisode != nil {
 			m.episodeMetadataCache[msg.CacheKey] = msg.RawEpisode
+			// Unbounded otherwise: every episode of every show adds a key.
+			if len(m.episodeMetadataCache) > 256 {
+				for k := range m.episodeMetadataCache {
+					delete(m.episodeMetadataCache, k)
+					break
+				}
+			}
 		}
 		if msg.Index == m.episodeState.Selected {
 			m.episodeState.EpisodeMetadata = msg.Metadata
@@ -660,22 +1087,46 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CoverImageLoadedMsg:
+		if m.state == watchlistState {
+			// The watchlist recognises its covers by the URL they were
+			// downloaded from: a download that comes back after the
+			// cursor moved belongs to an entry that is no longer shown.
+			if entry := m.watchlistSelected(); entry != nil && msg.Rendered != "" && msg.URL == entry.Cover {
+				m.watchlistCover = msg.Rendered
+				m.watchlistCoverW = msg.Width
+				m.watchlistCoverR = msg.Rows
+			}
+		}
+		if m.state == discoverState && msg.Index == discoverCoverIndex {
+			// The URL check drops a download that came back after the
+			// cursor moved, the same rule the watchlist applies.
+			if entry := m.discoverSelected(); entry != nil && msg.Rendered != "" && msg.URL == entry.Cover {
+				m.discoverCover = msg.Rendered
+				m.discoverCoverW = msg.Width
+				m.discoverCoverR = msg.Rows
+			}
+		}
 		if msg.Rendered != "" {
 			// Update the cached metadata with the rendered cover
 			if meta, ok := m.metadataCache[msg.Index]; ok {
 				meta.CoverImage = msg.Rendered
+				meta.CoverWidth = msg.Width
+				meta.CoverRows = msg.Rows
 			}
 			// Also update current metadata if it's the selected item
 			if m.searchState.Metadata != nil && msg.Index == m.searchState.Selected {
 				m.searchState.Metadata.CoverImage = msg.Rendered
+				m.searchState.Metadata.CoverWidth = msg.Width
+				m.searchState.Metadata.CoverRows = msg.Rows
 			}
-			// For Kitty protocol, transmit the image to terminal memory
-			// via tea.Raw() (bypasses the ultraviolet renderer).
-			// Delete old image first, then transmit the new one.
+			// For Kitty protocol the image is transmitted outside the view
+			// text: the ultraviolet renderer strips sequences it cannot read
+			// (APC), so tea.Raw() sends them directly to the terminal. Delete
+			// the old image first, then transmit the new.
 			if msg.KittyTransmitSeq != "" {
 				oldID := m.kittyImageID
 				m.kittyImageID = msg.KittyImageID
-				return m, tea.Batch(
+				cmds = append(cmds,
 					DeleteKittyImageCmd(oldID),
 					tea.Raw(msg.KittyTransmitSeq),
 				)
@@ -686,7 +1137,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.episodeState.Playing = false
 		m.progressPercent = 1.0
 		m.progressTarget = 1.0
-		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
+		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
 		// Fire tracking update
 		if m.trackingEnabled && len(m.searchState.Results) > 0 && m.searchState.Selected < len(m.searchState.Results) {
@@ -703,6 +1154,9 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TrackingStatusLoadedMsg:
 		m.episodeState.TrackingStatus = msg.Status
 		m.episodeState.TrackingProgress = msg.Progress
+		// The rows carry the watched badges: they must be rebuilt once
+		// the progress is known, the episodes may have loaded first.
+		m.updateEpisodeList()
 
 	case TrackingUpdateMsg:
 		if msg.Err != nil {
@@ -710,7 +1164,32 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.episodeState.TrackingStatus = msg.Status
 			m.episodeState.TrackingProgress = msg.Progress
+			// The episode just played moved the progress: the badge of
+			// the next episode becomes the play glyph.
+			m.updateEpisodeList()
 		}
+
+	case WatchlistLoadedMsg:
+		if m.watchlist == nil {
+			m.watchlist = &WatchlistState{}
+		}
+		m.watchlist.Loading = false
+		m.watchlist.Err = msg.Err
+		m.watchlist.Entries = msg.Entries
+		m.watchlist.Cursor = 0
+		m.watchlist.Scroll = 0
+		cmds = append(cmds, m.watchlistCoverCmd())
+
+	case DiscoverLoadedMsg:
+		if m.discover == nil {
+			m.discover = &DiscoverState{}
+		}
+		m.discover.Loading = false
+		m.discover.Err = msg.Err
+		m.discover.Trending = msg.Trending
+		m.discover.Popular = msg.Popular
+		m.discover.Selected = 0
+		m.discover.Scroll = 0
 
 	case AniListLoginMsg:
 		m.state = settingsState
@@ -723,11 +1202,44 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.trackingEnabled = m.anilistToken != ""
 		}
 
+	case UpdateCheckMsg:
+		if msg.Err != nil {
+			m.settingsState.UpdateStatus = "error"
+			m.settingsState.UpdateError = msg.Err
+		} else if update.IsUpdateAvailable(version.Version, msg.LatestVersion) {
+			m.settingsState.UpdateStatus = "available"
+			m.settingsState.UpdateVersion = msg.LatestVersion
+		} else {
+			m.settingsState.UpdateStatus = "up_to_date"
+		}
+
+	case UpdateCompleteMsg:
+		if msg.Err != nil {
+			m.settingsState.UpdateStatus = "error"
+			m.settingsState.UpdateError = msg.Err
+		} else {
+			m.settingsState.UpdateStatus = "updated"
+		}
+
+	case SearchErrorMsg:
+		// The search failed: stop the spinner and show the error panel
+		// the view already renders for searchState.Err. Without this
+		// case the message was dropped and the UI spun forever. A stale
+		// error from an older query is dropped like a stale result list.
+		if msg.Query != m.lastQuery {
+			break
+		}
+		m.searchState.Loading = false
+		m.progressTarget = 0
+		m.progress = newProgress()
+		m.progress.SetWidth(m.width)
+		m.searchState.Err = msg.Err
+
 	case TUIErrorMsg:
 		m.episodeState.Playing = false
 		m.progressPercent = 1.0
 		m.progressTarget = 1.0
-		m.progress = progress.New(progress.WithColors(Theme.Primary, Theme.Secondary), progress.WithScaled(true))
+		m.progress = newProgress()
 		m.progress.SetWidth(m.width)
 		m.episodeState.Err = msg.Err
 	}
@@ -738,10 +1250,23 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *SearchModel) resize(width, height int) {
 	m.width = width
 	m.height = height
+	m.updateLayout()
+}
+
+// updateLayout recomputes the geometry of the application shell and resizes
+// the components that live in the content region.
+//
+// The navigation drawer takes part of the screen on wide terminals, so the
+// content region is smaller than the terminal. Everything that is laid out
+// inside the content region has to be measured against the content region.
+func (m *SearchModel) updateLayout() {
+	regions := m.shellRegions()
+	m.contentWidth = regions.contentWidth
+	m.contentHeight = regions.contentHeight
 
 	padX, padY := 4, 2
-	styledWidth := width - padX
-	styledHeight := height - padY
+	styledWidth := m.contentWidth - padX
+	styledHeight := m.contentHeight - padY
 
 	if styledWidth < 20 {
 		styledWidth = 20
@@ -756,22 +1281,30 @@ func (m *SearchModel) resize(width, height int) {
 		listHeight = 1
 	}
 
-	m.textInput.SetWidth(styledWidth)
+	// The search field draws its own frame: the border and the padding take
+	// four cells, the icon and its space take two more. The text input only
+	// renders the value, so it gets the rest.
+	inputWidth := m.contentWidth - 6
+	if inputWidth < 8 {
+		inputWidth = 8
+	}
+
+	m.textInput.SetWidth(inputWidth)
 	m.help.SetWidth(styledWidth)
-	m.progress.SetWidth(width)
+	m.progress.SetWidth(m.contentWidth)
 
 	// Size lists based on current state layout
 	switch m.state {
 	case searchState:
 		if len(m.searchState.Results) > 0 {
-			leftW, _, _, _ := searchLayout(width, height)
+			leftW, _, _, _ := searchLayout(m.contentWidth, m.contentHeight)
 			m.searchList.SetSize(leftW, listHeight)
 		} else {
 			m.searchList.SetSize(styledWidth, listHeight)
 		}
 		m.episodeList.SetSize(styledWidth, listHeight)
 	case detailState:
-		_, rightW, _, _ := detailLayout(width, height)
+		_, rightW, _, _ := detailLayout(m.contentWidth, m.contentHeight)
 		m.searchList.SetSize(styledWidth, listHeight)
 		m.episodeList.SetSize(rightW, listHeight)
 	default:
@@ -782,8 +1315,10 @@ func (m *SearchModel) resize(width, height int) {
 
 func (m *SearchModel) updateSearchList() {
 	items := make([]list.Item, 0, len(m.searchState.Results))
-	for _, anime := range m.searchState.Results {
-		items = append(items, animeItem{anime: anime})
+	for i, anime := range m.searchState.Results {
+		// The row carries the metadata of its entry when it is already
+		// known: the alternative title and the status are part of the row.
+		items = append(items, animeItem{anime: anime, meta: m.metadataCache[i]})
 	}
 	cmd := m.searchList.SetItems(items)
 	if cmd != nil {
@@ -799,13 +1334,37 @@ func (m *SearchModel) updateEpisodeList() {
 		if len(m.episodeState.EpisodeTitles) > i {
 			title = m.episodeState.EpisodeTitles[i]
 		}
-		items = append(items, episodeItem{number: ep, title: title})
+		watched, nextUp := m.episodeTracking(ep)
+		items = append(items, episodeItem{number: ep, title: title, watched: watched, nextUp: nextUp})
 	}
 	cmd := m.episodeList.SetItems(items)
 	if cmd != nil {
 		cmd()
 	}
 	m.episodeList.Select(m.episodeState.Selected)
+}
+
+// episodeTracking reports the watched and next-up state of one episode.
+//
+// The progress comes from AniList: every episode at or before the progress
+// is watched, the one right after it is the one to play next. A model
+// without tracking marks nothing, so the rows stay as they were.
+func (m *SearchModel) episodeTracking(ep string) (watched, nextUp bool) {
+	if !m.trackingEnabled || m.episodeState.TrackingStatus == "" {
+		return false, false
+	}
+	progress := m.episodeState.TrackingProgress
+	if progress <= 0 {
+		return false, false
+	}
+	number, err := strconv.Atoi(ep)
+	if err != nil {
+		return false, false
+	}
+	if number <= progress {
+		return true, false
+	}
+	return false, number == progress+1
 }
 
 func (m *SearchModel) filterEpisodesByNumber(query string) {
@@ -820,7 +1379,8 @@ func (m *SearchModel) filterEpisodesByNumber(query string) {
 			if len(m.episodeState.EpisodeTitles) > i {
 				title = m.episodeState.EpisodeTitles[i]
 			}
-			items = append(items, episodeItem{number: ep, title: title})
+			watched, nextUp := m.episodeTracking(ep)
+			items = append(items, episodeItem{number: ep, title: title, watched: watched, nextUp: nextUp})
 		}
 	}
 	cmd := m.episodeList.SetItems(items)
@@ -847,6 +1407,82 @@ func (m *SearchModel) GetSelectedAnime() *source.Anime {
 		return m.searchState.Results[m.searchState.Selected]
 	}
 	return nil
+}
+
+// pillSwitchClicked reports whether a mouse click at column x hit the
+// SUB/DUB pill switch in the app bar. The bounds are set by renderAppBar
+// and describe the frame the click lands on.
+func (m *SearchModel) pillSwitchClicked(x int) bool {
+	return m.psX1 < m.psX2 && x >= m.psX1 && x < m.psX2
+}
+
+// recentSearchAt maps a content-region row (0 = the row under the app bar)
+// to an index into the recent searches, or -1 when the row does not hold a
+// recent search entry.
+//
+// The recent searches are on screen only on a fresh search screen. The
+// bordered search field takes three rows, then a blank line, the section
+// header and another blank line sit between it and the entries: the first
+// entry is content row 6, and the entries follow one per row.
+func (m *SearchModel) recentSearchAt(y int) int {
+	if m.state != searchState || m.textInput.Value() != "" ||
+		m.searchState.Loading || m.searchState.Err != nil ||
+		len(m.searchState.Results) > 0 || len(m.recentSearches) == 0 {
+		return -1
+	}
+	// The modal drawer covers the content region: the recent searches are
+	// not on screen, so a click must not reach them through the drawer.
+	if !m.navPersistent() && m.nav.overlay {
+		return -1
+	}
+	index := y - recentSearchesTop
+	if index < 0 || index >= len(m.recentSearches) {
+		return -1
+	}
+	return index
+}
+
+// recentSearchesTop is the content-region row of the first recent search
+// entry: the three rows of the bordered field, a blank line, the section
+// header and the blank line under it.
+const recentSearchesTop = 6
+
+// selectRecentSearch starts a search for the recent query at the index,
+// exactly as the enter key does on the same screen.
+func (m *SearchModel) selectRecentSearch(index int) (tea.Model, tea.Cmd) {
+	if index < 0 || index >= len(m.recentSearches) {
+		return m, nil
+	}
+	m.recentCursor = index
+	query := m.recentSearches[index]
+	m.textInput.SetValue(query)
+	m.lastQuery = query
+	m.searchState.Query = query
+	m.searchState.Loading = true
+	m.progressPercent = 0
+	m.progressTarget = 0.3
+	m.textInput.Blur()
+	return m, tea.Batch(
+		m.doSearch(query),
+		m.loading.Tick,
+		tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return progressTickMsg{}
+		}),
+	)
+}
+
+// toggleTranslation flips the selected translation between sub and dub,
+// wiring the change through the state, the configuration and the provider
+// exactly as the tab key does.
+func (m *SearchModel) toggleTranslation() {
+	s := &m.searchState.TranslationType
+	if *s != "sub" {
+		*s = "sub"
+	} else {
+		*s = "dub"
+	}
+	m.hianimeProvider.SetTranslation(*s)
+	config.Set("translation_type", *s)
 }
 
 func RunSearch() (*SelectionResult, error) {

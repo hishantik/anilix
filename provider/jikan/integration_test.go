@@ -2,8 +2,6 @@ package jikan
 
 import (
 	"testing"
-
-	"github.com/hishantik/anilix/source"
 )
 
 func TestIntegration_JikanSearch(t *testing.T) {
@@ -27,20 +25,4 @@ func TestIntegration_JikanSearch(t *testing.T) {
 	}
 
 	t.Logf("Found anime: %s (MAL ID: %d)", anime.Name, anime.MALID)
-}
-
-func TestIntegration_AnimeLinker(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	linker := NewAnimeLinker()
-
-	anime := &source.Anime{
-		Name:  "Test",
-		MALID: 1,
-	}
-
-	_ = anime
-	_ = linker
 }

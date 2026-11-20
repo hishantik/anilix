@@ -8,7 +8,7 @@ type Episode struct {
 	Number float64
 	Title  string
 	URL    string
-	Season int  // 0 = no season (single season anime)
+	Season int // 0 = no season (single season anime)
 	Anime  *Anime
 }
 

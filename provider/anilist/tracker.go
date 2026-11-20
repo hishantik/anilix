@@ -87,3 +87,84 @@ func (c *Client) GetMediaListStatus(ctx context.Context, mediaID int) (*MediaLis
 
 	return result.MediaList, nil
 }
+
+// WatchlistOf returns the saved anime of the authenticated user, list by
+// list, in the order AniList keeps them.
+//
+// The watchlist of Anilix is the user's AniList list: the screen only
+// reads it, and the saving stays where it is today - a played episode
+// saves its progress, nothing is written by the list itself.
+func (c *Client) WatchlistOf(ctx context.Context) ([]WatchlistEntry, error) {
+	if c.token == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+
+	// The collection query is per user: the viewer id comes first.
+	_, userID, err := c.GetViewer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	c.rateLimiter.waitForToken()
+
+	query := `query ($userId: Int) {
+		MediaListCollection(userId: $userId, type: ANIME) {
+			lists {
+				entries {
+					status
+					progress
+					media {
+						id
+						title { userPreferred romaji english }
+						coverImage { large }
+						episodes
+						format
+						seasonYear
+						averageScore
+					}
+				}
+			}
+		}
+	}`
+	variables := map[string]interface{}{"userId": userID}
+
+	resp, err := c.doGraphQL(ctx, query, variables)
+	if err != nil {
+		return nil, fmt.Errorf("media list collection query failed: %w", err)
+	}
+
+	var result MediaListCollectionResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode list collection: %w", err)
+	}
+
+	return watchlistOfCollection(result.Data.MediaListCollection), nil
+}
+
+// watchlistOfCollection flattens the list collection of a user into the
+// entries the watchlist screen shows, in the order the lists arrive.
+//
+// It exists apart from the query so the shape of the answer can be tested
+// without the network.
+func watchlistOfCollection(collection MediaListCollection) []WatchlistEntry {
+	entries := make([]WatchlistEntry, 0)
+	for _, list := range collection.Lists {
+		for _, e := range list.Entries {
+			if e.Media.ID == 0 {
+				continue
+			}
+			entries = append(entries, WatchlistEntry{
+				AniListID: e.Media.ID,
+				Title:     e.Media.Title.UserPreferred,
+				Cover:     e.Media.CoverImage.Large,
+				Status:    e.Status,
+				Progress:  e.Progress,
+				Total:     e.Media.Episodes,
+				Year:      e.Media.SeasonYear,
+				Score:     float64(e.Media.AverageScore) / 10,
+				Format:    e.Media.Format,
+			})
+		}
+	}
+	return entries
+}

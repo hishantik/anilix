@@ -2,7 +2,9 @@ package player
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -32,7 +34,7 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 	// because Go's default resolver tries [::1]:53 which fails in Termux.
 	client := &http.Client{
 		Transport: &http.Transport{
-			DialContext: proxyDialContext,
+			DialContext:         proxyDialContext,
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 5,
 			IdleConnTimeout:     5 * time.Minute,
@@ -50,11 +52,44 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		plCache   = map[string]plEntry{}
 	)
 
-	isPlaylist := func(ct, u string) bool {
-		lower := strings.ToLower(u)
-		return strings.Contains(ct, "mpegurl") ||
-			strings.HasSuffix(lower, ".m3u8") ||
-			strings.HasSuffix(lower, ".m3u")
+	// Host allowlist: ?u= may only fetch hosts that belong to this
+	// playback — the master playlist's host plus hosts seen in playlists
+	// we rewrote. Anything else gets 403, so the proxy is not a localhost
+	// fetch oracle for arbitrary URLs.
+	var (
+		allowMu      sync.Mutex
+		allowedHosts = map[string]bool{}
+	)
+	if parsed, err := url.Parse(remoteURL); err == nil && parsed.Host != "" {
+		allowedHosts[parsed.Host] = true
+	}
+	allowHost := func(host string) {
+		if host == "" {
+			return
+		}
+		allowMu.Lock()
+		allowedHosts[host] = true
+		allowMu.Unlock()
+	}
+	hostAllowed := func(host string) bool {
+		allowMu.Lock()
+		defer allowMu.Unlock()
+		return allowedHosts[host]
+	}
+
+	// readIfPlaylist decides by content whether a response is an m3u8
+	// playlist. The caller passes a bufio.Reader it keeps using afterwards,
+	// so peeked bytes are preserved for the segment path.
+	readIfPlaylist := func(r *bufio.Reader) ([]byte, bool, error) {
+		head, err := r.Peek(16)
+		if err != nil && len(head) == 0 {
+			return nil, false, err
+		}
+		if !bytes.Contains(bytes.TrimLeft(head, "\ufeff \t\r\n"), []byte("#EXTM3U")) {
+			return nil, false, nil
+		}
+		body, err := io.ReadAll(r)
+		return body, true, err
 	}
 
 	mux := http.NewServeMux()
@@ -62,13 +97,18 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 		defer cancel()
 
-		// ?u= param lets m3u8 segment/playlist URLs route through us
+		// ?u= param lets m3u8 segment/playlist URLs route through us —
+		// only for hosts this playback already touched (see allowlist).
 		targetURL := remoteURL
 		if u := r.URL.Query().Get("u"); u != "" {
+			parsed, err := url.Parse(u)
+			if err != nil || parsed.Host == "" || !hostAllowed(parsed.Host) {
+				fmt.Fprintf(os.Stderr, "[anilix-proxy] blocked cross-host fetch: %v\n", u)
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
 			targetURL = u
 		}
-
-		fmt.Fprintf(os.Stderr, "[anilix-proxy] %s %s (target: %.120s)\n", r.Method, r.URL.String(), targetURL)
 
 		// Check playlist cache (2s TTL)
 		plCacheMu.Lock()
@@ -110,40 +150,77 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		ct := resp.Header.Get("Content-Type")
 
-		// Fix generic Content-Type so mpv knows it's video
-		if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" {
-			if sniffed := sniffVideoType(targetURL); sniffed != "" {
-				ct = sniffed
+		// One buffered reader wraps the body for both the playlist peek and
+		// the segment stream, so peeked bytes are never lost.
+		body := bufio.NewReaderSize(resp.Body, 64*1024)
+
+		// Playlists are detected by content, not headers: some hosts serve
+		// m3u8 with a generic or even image content type.
+		if resp.StatusCode == 200 {
+			if pl, isPL, err := readIfPlaylist(body); err == nil && isPL {
+				var targetBase *url.URL
+				if parsed, err := url.Parse(targetURL); err == nil {
+					targetBase = parsed
+				}
+				rewritten := rewritePlaylist(string(pl), localURL, targetBase)
+
+				// The rewritten playlist routes its segment/variant URLs
+				// back through us: admit their hosts before serving.
+				if parsed, err := url.Parse(targetURL); err == nil {
+					allowHost(parsed.Host)
+				}
+				for _, line := range strings.Split(rewritten, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" || strings.HasPrefix(line, "#") {
+						continue
+					}
+					if q, err := url.QueryUnescape(strings.TrimPrefix(line, localURL+"?u=")); err == nil {
+						if parsed, err := url.Parse(q); err == nil {
+							allowHost(parsed.Host)
+						}
+					}
+				}
+				data := []byte(rewritten)
+
+				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.WriteHeader(resp.StatusCode)
+
+				plCacheMu.Lock()
+				// Cap the cache: a live stream cycles unique playlist
+				// URLs and would otherwise grow it without limit.
+				if len(plCache) >= 64 {
+					for k := range plCache {
+						if time.Now().After(plCache[k].expiresAt) {
+							delete(plCache, k)
+						}
+					}
+					if len(plCache) >= 64 {
+						for k := range plCache {
+							delete(plCache, k)
+							break
+						}
+					}
+				}
+				plCache[targetURL] = plEntry{data: data, expiresAt: time.Now().Add(2 * time.Second)}
+				plCacheMu.Unlock()
+
+				w.Write(data)
+				return
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "[anilix-proxy] upstream %d %s (ct: %s)\n", resp.StatusCode, targetURL, ct)
-
-		// Playlist: read fully, rewrite URLs, cache 2s — must handle
-		// before WriteHeader because rewriting changes Content-Length.
-		if isPlaylist(ct, targetURL) && resp.StatusCode == 200 {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return
+		// Fix wrong/generic Content-Type so mpv knows it's video. The MegaPlay
+		// CDN serves real MPEG-TS segments as image/jpeg, text/html or
+		// application/javascript, so headers alone cannot be trusted.
+		if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" ||
+			strings.HasPrefix(ct, "image/") || ct == "text/html" || ct == "application/javascript" {
+			if sniffed := sniffSegmentType(body); sniffed != "" {
+				ct = sniffed
+			} else if sniffed := sniffVideoType(targetURL); sniffed != "" {
+				ct = sniffed
 			}
-			var targetBase *url.URL
-			if parsed, err := url.Parse(targetURL); err == nil {
-				targetBase = parsed
-			}
-			rewritten := rewritePlaylist(string(body), localURL, targetBase)
-			data := []byte(rewritten)
-
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.WriteHeader(resp.StatusCode)
-
-			plCacheMu.Lock()
-			plCache[targetURL] = plEntry{data: data, expiresAt: time.Now().Add(2 * time.Second)}
-			plCacheMu.Unlock()
-
-			w.Write(data)
-			return
 		}
 
 		// Segments: forward headers and stream
@@ -160,7 +237,11 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		w.WriteHeader(resp.StatusCode)
 
 		bw := bufio.NewWriterSize(w, 256*1024)
-		io.Copy(bw, resp.Body)
+		if _, err := io.Copy(bw, body); err != nil {
+			// Headers are already sent; log only. A truncated segment is
+			// a playback glitch worth a diagnostic.
+			fmt.Fprintf(os.Stderr, "[anilix-proxy] segment copy failed: %v\n", err)
+		}
 		bw.Flush()
 	})
 
@@ -260,8 +341,7 @@ func rewriteTagURI(tag string, resolve func(string) string) string {
 }
 
 // sniffVideoType returns a video Content-Type based on the URL extension.
-func sniffVideoType(rawURL string) string {
-	u, err := url.Parse(rawURL)
+func sniffVideoType(rawURL string) string {	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "video/mp4"
 	}
@@ -284,6 +364,27 @@ func sniffVideoType(rawURL string) string {
 	default:
 		return "video/mp4"
 	}
+}
+
+// sniffSegmentType detects media content by magic bytes, for segments whose
+// served Content-Type lies (MPEG-TS behind image/jpeg, text/html, ...).
+// It peeks; the caller keeps streaming from the same reader.
+func sniffSegmentType(r *bufio.Reader) string {
+	head, err := r.Peek(8)
+	if err != nil && len(head) < 5 {
+		return ""
+	}
+	switch {
+	case head[0] == 0x47:
+		return "video/mp2t" // MPEG-TS sync byte
+	case len(head) >= 8 && string(head[4:8]) == "ftyp":
+		return "video/mp4"
+	case len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3:
+		return "video/x-matroska"
+	case len(head) >= 4 && string(head[0:4]) == "RIFF":
+		return "video/webm"
+	}
+	return ""
 }
 
 // proxyDialContext resolves hostnames via direct UDP DNS to 8.8.8.8 (bypassing
@@ -347,13 +448,15 @@ func dnsQueryServer(ctx context.Context, server string, query []byte) (net.IP, e
 	if err != nil {
 		return nil, err
 	}
-	return parseDNSResponse(buf[:n])
+	return parseDNSResponse(buf[:n], query[0:2])
 }
 
 func buildDNSQuery(host string) []byte {
-	// Header: ID=0x1234, flags=standard query, 1 question, 0 answers
+	// Header: random ID (a fixed one is spoofable), flags=standard query, 1 question
 	var msg []byte
-	msg = append(msg, 0x12, 0x34) // ID
+	id := make([]byte, 2)
+	rand.Read(id)
+	msg = append(msg, id...)
 	msg = append(msg, 0x01, 0x00) // flags: standard query, recursion desired
 	msg = append(msg, 0x00, 0x01) // 1 question
 	msg = append(msg, 0x00, 0x00) // 0 answers
@@ -372,9 +475,17 @@ func buildDNSQuery(host string) []byte {
 	return msg
 }
 
-func parseDNSResponse(buf []byte) (net.IP, error) {
+func parseDNSResponse(buf, txID []byte) (net.IP, error) {
 	if len(buf) < 12 {
 		return nil, fmt.Errorf("dns response too short")
+	}
+	// The response must echo our transaction ID and report success:
+	// without this, a spoofed reply on a shared NAT pins the host.
+	if buf[0] != txID[0] || buf[1] != txID[1] {
+		return nil, fmt.Errorf("dns: transaction id mismatch")
+	}
+	if rcode := buf[3] & 0x0F; rcode != 0 {
+		return nil, fmt.Errorf("dns: server error rcode=%d", rcode)
 	}
 	// Skip header (12 bytes), skip question section
 	qdCount := int(buf[4])<<8 | int(buf[5])

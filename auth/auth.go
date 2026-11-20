@@ -3,6 +3,8 @@ package auth
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -49,9 +51,17 @@ func Login() error {
 	}
 	defer listener.Close()
 
+	// CSRF state: a random value the callback must echo back, so a
+	// malicious page cannot feed us a code it chose.
+	state := make([]byte, 16)
+	if _, err := rand.Read(state); err != nil {
+		return fmt.Errorf("cannot generate state: %w", err)
+	}
+	stateStr := hex.EncodeToString(state)
+
 	authURL := fmt.Sprintf(
-		"https://anilist.co/api/v2/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code",
-		ClientID, RedirectURI,
+		"https://anilist.co/api/v2/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=%s",
+		ClientID, RedirectURI, stateStr,
 	)
 
 	infoPrintln("Opening browser for AniList login...")
@@ -61,7 +71,7 @@ func Login() error {
 
 	infoPrintln("Waiting for AniList authorization...")
 
-	code, err := waitForCode(listener)
+	code, err := waitForCode(listener, stateStr)
 	if err != nil {
 		return err
 	}
@@ -180,8 +190,9 @@ func finishLogin(token string) error {
 	return nil
 }
 
-// waitForCode accepts one HTTP connection, extracts the authorization code, serves a success page.
-func waitForCode(listener net.Listener) (string, error) {
+// waitForCode accepts one HTTP connection, verifies the state echo and
+// extracts the authorization code, serves a success page.
+func waitForCode(listener net.Listener, state string) (string, error) {
 	listener.(*net.TCPListener).SetDeadline(time.Now().Add(2 * time.Minute))
 
 	conn, err := listener.Accept()
@@ -197,6 +208,13 @@ func waitForCode(listener net.Listener) (string, error) {
 	}
 
 	requestLine := string(buf[:n])
+
+	// The callback must echo the state we sent: a request without it or
+	// with a different one did not come from our authorization flow.
+	if !strings.Contains(requestLine, "state="+state) {
+		conn.Write([]byte(successPage("Login failed: authorization state mismatch. Please try again.")))
+		return "", fmt.Errorf("oauth state mismatch in callback")
+	}
 
 	code := parseCodeFromRequest(requestLine)
 	if code == "" {

@@ -8,6 +8,12 @@ import (
 	"os/exec"
 )
 
+// execCommandContext wraps exec.CommandContext so dns.go and curl.go share
+// one entry point for invoking the curl binary.
+func execCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, name, args...)
+}
+
 // Get makes a GET request via curl and returns the response body
 func Get(ctx context.Context, url string, headers map[string]string) (string, error) {
 	args := []string{"-s", "-L", url}

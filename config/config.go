@@ -21,10 +21,20 @@ func Setup() error {
 	setEnvs()
 	setDefaults()
 	setPaths()
+	// The config holds the AniList OAuth token: only the owner may read it.
+	v.SetConfigPermissions(0600)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return err
+		}
+	}
+
+	// Viper applies the mode only on create: an existing 0644 file from an
+	// older version keeps its loose permissions until chmod'ed here.
+	if path := v.ConfigFileUsed(); path != "" {
+		if err := os.Chmod(path, 0600); err != nil && !os.IsNotExist(err) {
+			log.Printf("[anilix] failed to tighten config permissions: %v\n", err)
 		}
 	}
 
@@ -53,18 +63,23 @@ func setDefaults() {
 	v.SetDefault("history.enabled", true)
 	v.SetDefault("aniskip.enabled", true)
 	v.SetDefault("anilist.tracking.enabled", true)
+	// artwork.renderer: auto | kitty | iterm2 | halfblock | chafa | ascii | none
+	v.SetDefault("artwork.renderer", "auto")
+	v.SetDefault("ui.sidebar", "expanded")
 }
 
 func setPaths() {
+	// The home fallback below produces a usable path in the CWD rather
+	// than a literal "~" that no shell expands.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "~"
+		home = "."
 	}
 
 	configDir := filepath.Join(home, "."+AppName)
 	v.AddConfigPath(configDir)
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		log.Printf("[anilix] failed to create config dir: %v\n", err)
 	}
 }
@@ -86,7 +101,8 @@ func Set(key string, value interface{}) {
 	Save()
 }
 
-// Save persists the current config to disk.
+// Save persists the current config to disk atomically: a crash mid-write
+// must not truncate the file that holds the OAuth token.
 func Save() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -94,13 +110,26 @@ func Save() {
 		return
 	}
 	dir := filepath.Join(home, "."+AppName)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		log.Printf("[anilix] failed to create config dir: %v\n", err)
 		return
 	}
 	path := filepath.Join(dir, AppName+".toml")
-	if err := v.WriteConfigAs(path); err != nil {
+	// Viper picks the serializer from the file extension: the temp file
+	// must end in .toml or WriteConfigAs refuses to write it.
+	tmp := filepath.Join(dir, AppName+".tmp.toml")
+	if err := v.WriteConfigAs(tmp); err != nil {
 		log.Printf("[anilix] failed to save config: %v\n", err)
+		os.Remove(tmp)
+		return
+	}
+	// viper applies the mode only on create; keep an existing file at 0600.
+	if err := os.Chmod(tmp, 0600); err != nil {
+		log.Printf("[anilix] failed to tighten config permissions: %v\n", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[anilix] failed to replace config: %v\n", err)
+		os.Remove(tmp)
 	}
 }
 
@@ -108,7 +137,7 @@ func Save() {
 func HistoryPath() string {
 	home, _ := os.UserHomeDir()
 	if home == "" {
-		home = "~"
+		home = "."
 	}
 	return filepath.Join(home, "."+AppName, "history.json")
 }

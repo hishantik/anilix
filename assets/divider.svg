@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="880" height="120" viewBox="0 0 880 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="divider">
+  <defs>
+    <linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="880" y2="0">
+      <stop offset="0" stop-color="#00d4ff" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#6366f1"/>
+      <stop offset="0.5" stop-color="#d946ef"/>
+      <stop offset="0.75" stop-color="#f43f5e"/>
+      <stop offset="1" stop-color="#f43f5e" stop-opacity="0"/>
+      <animateTransform attributeName="gradientTransform" type="translate" values="-880 0; 880 0" dur="5s" repeatCount="indefinite"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="58" width="800" height="3" rx="1.5" fill="url(#lg)"/>
+</svg>
