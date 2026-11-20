@@ -220,38 +220,53 @@ func (p *Provider) StreamsOf(episode *source.Episode) ([]*source.Stream, error) 
 		return nil, err
 	}
 
-	cands, err := p.serverCandidates(ctx, dataID)
+	cands0, err := p.serverCandidates(ctx, dataID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Try the ranked servers until one yields a decodable config: server
-	// names and player formats change, so a single hardcoded server is not
-	// reliable.
+	// Try the ranked servers until one yields a playable stream: server
+	// names and player formats change, and a CDN can be down (e.g. a 525
+	// from Zoko while MegaPlay works), so every candidate is fully resolved
+	// - config, playlist, variants - before it is accepted.
+	cands := rankEmbeds(cands0, p.translation)
+	var lastErr error
+	for _, c := range cands {
+		streams, err := p.streamsFromEmbed(ctx, c.Embed)
+		if err == nil {
+			// Enrich MALID for AniSkip if the TUI doesn't have it yet.
+			if episode.Anime.MALID == 0 {
+				if malID := malIDFromEmbed(c.Embed); malID > 0 {
+					episode.Anime.MALID = malID
+				}
+			}
+			return streams, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("no playable server for episode (%d tried): %w", len(cands), lastErr)
+}
+
+// streamsFromEmbed resolves a single embed into validated quality variants.
+// It dispatches on the player host: MegaPlay uses getSources + AES, the
+// default (Zoko) uses the obfuscated window.__P blob.
+func (p *Provider) streamsFromEmbed(ctx context.Context, embedURL string) ([]*source.Stream, error) {
 	var (
-		cfg      *StreamJSON
-		embedURL string
-		lastErr  error
+		cfg     *StreamJSON
+		referer string
+		err     error
 	)
-	for _, c := range rankEmbeds(cands, p.translation) {
-		embedURL = c.Embed
-		cfg, lastErr = GetStreamConfig(ctx, c.Embed)
-		if lastErr == nil {
-			break
-		}
+	if isMegaPlay(embedURL) {
+		cfg, err = GetMegaPlayConfig(ctx, embedURL)
+		referer = megaPlayReferer
+	} else {
+		cfg, err = GetStreamConfig(ctx, embedURL)
+		referer = embedReferer(embedURL)
 	}
-	if cfg == nil {
-		return nil, fmt.Errorf("no playable server for episode: %w", lastErr)
-	}
-
-	// Enrich MALID for AniSkip if the TUI doesn't have it yet.
-	if episode.Anime.MALID == 0 {
-		if malID := malIDFromEmbed(embedURL); malID > 0 {
-			episode.Anime.MALID = malID
-		}
+	if err != nil {
+		return nil, err
 	}
 
-	referer := embedReferer(embedURL)
 	variants, err := GetVariants(ctx, cfg.Src, referer)
 	if err != nil {
 		return nil, err

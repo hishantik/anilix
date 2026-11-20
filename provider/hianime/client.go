@@ -264,36 +264,40 @@ func parseServers(page string) []EmbedCandidate {
 }
 
 // rankEmbeds orders candidates by preference: the requested translation
-// first, then sub, then dub, then anything else. Servers on the known
-// player host come first because only they expose the decodable config.
+// first, then sub, then dub, then anything else. Within a translation, servers
+// on a known player host come first. Translation must outrank host: a dub on
+// an alternate player is more useful to a dub viewer than a sub on the
+// preferred player.
 func rankEmbeds(cands []EmbedCandidate, translation string) []EmbedCandidate {
-	score := func(c EmbedCandidate) int {
-		s := 0
-		if c.Type == translation {
-			s += 8
-		} else if c.Type == "sub" {
-			s += 4
-		} else if c.Type == "dub" {
-			s += 2
+	typeRank := func(c EmbedCandidate) int {
+		switch {
+		case c.Type == translation:
+			return 0
+		case c.Type == "sub":
+			return 1
+		case c.Type == "dub":
+			return 2
+		default:
+			return 3
 		}
-		if playerHost(c.Embed) {
-			s += 1
-		}
-		return s
 	}
 
 	ordered := make([]EmbedCandidate, len(cands))
 	copy(ordered, cands)
 	sort.SliceStable(ordered, func(i, j int) bool {
-		return score(ordered[i]) > score(ordered[j])
+		ri, rj := typeRank(ordered[i]), typeRank(ordered[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return playerHost(ordered[i].Embed) && !playerHost(ordered[j].Embed)
 	})
 	return ordered
 }
 
-// playerHost reports whether the embed is served by the known player, which
-// exposes the obfuscated config blob (window.__P).
+// playerHost reports whether the embed is served by a player we can decode.
+// Zoko exposes an obfuscated window.__P blob; MegaPlay uses getSources + AES.
 func playerHost(embedURL string) bool {
-	return strings.Contains(embedURL, "zokoanime.video")
+	return strings.Contains(embedURL, "zokoanime.video") || isMegaPlay(embedURL)
 }
 
 // obfKey is the repeating XOR key the embed page uses for its base64 config.
@@ -340,17 +344,49 @@ func parseStreamConfig(page string) (*StreamJSON, error) {
 }
 
 // GetVariants fetches a master HLS playlist and extracts quality variants.
+// A body that is neither a master nor a media playlist is an error: CDNs
+// often return HTML or a plain-text error with HTTP 200/5xx, and treating
+// that as a playable URL makes the player open and close immediately.
 func GetVariants(ctx context.Context, masterURL, referer string) ([]Variant, error) {
 	playlist, err := get(ctx, masterURL, referer)
 	if err != nil {
 		return nil, fmt.Errorf("hianime playlist failed: %w", err)
 	}
-	variants := parseMasterPlaylist(playlist, masterURL)
-	if len(variants) == 0 {
-		// Not a master playlist (media playlist) - play it directly.
+	return variantsFromPlaylist(playlist, masterURL)
+}
+
+// variantsFromPlaylist validates and parses an HLS response. It is separated
+// from GetVariants so the validation can be tested without a network call.
+func variantsFromPlaylist(playlist, masterURL string) ([]Variant, error) {
+	body := strings.TrimSpace(strings.TrimPrefix(playlist, "\ufeff"))
+	if !strings.HasPrefix(body, "#EXTM3U") {
+		return nil, fmt.Errorf("hianime playlist is not HLS: %s", bodySnippet(body))
+	}
+
+	if variants := parseMasterPlaylist(body, masterURL); len(variants) > 0 {
+		return variants, nil
+	}
+
+	// A media playlist (segments, no variants) is playsafe directly.
+	if strings.Contains(body, "#EXTINF") || strings.Contains(body, "#EXT-X-TARGETDURATION") {
 		return []Variant{{Quality: "auto", URL: masterURL}}, nil
 	}
-	return variants, nil
+
+	return nil, fmt.Errorf("hianime playlist has no variants or segments")
+}
+
+// bodySnippet returns a short, single-line version of a response body for
+// error messages, without dumping a whole page into the TUI.
+func bodySnippet(body string) string {
+	snippet := strings.Join(strings.Fields(body), " ")
+	if snippet == "" {
+		return "(empty response)"
+	}
+	const max = 120
+	if len(snippet) > max {
+		snippet = snippet[:max] + "..."
+	}
+	return fmt.Sprintf("%q", snippet)
 }
 
 var (

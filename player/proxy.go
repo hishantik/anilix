@@ -2,6 +2,7 @@ package player
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -50,11 +51,19 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		plCache   = map[string]plEntry{}
 	)
 
-	isPlaylist := func(ct, u string) bool {
-		lower := strings.ToLower(u)
-		return strings.Contains(ct, "mpegurl") ||
-			strings.HasSuffix(lower, ".m3u8") ||
-			strings.HasSuffix(lower, ".m3u")
+	// readIfPlaylist decides by content whether a response is an m3u8
+	// playlist. The caller passes a bufio.Reader it keeps using afterwards,
+	// so peeked bytes are preserved for the segment path.
+	readIfPlaylist := func(r *bufio.Reader) ([]byte, bool, error) {
+		head, err := r.Peek(16)
+		if err != nil && len(head) == 0 {
+			return nil, false, err
+		}
+		if !bytes.Contains(bytes.TrimLeft(head, "\ufeff \t\r\n"), []byte("#EXTM3U")) {
+			return nil, false, nil
+		}
+		body, err := io.ReadAll(r)
+		return body, true, err
 	}
 
 	mux := http.NewServeMux()
@@ -108,38 +117,45 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 
 		ct := resp.Header.Get("Content-Type")
 
-		// Fix generic Content-Type so mpv knows it's video
-		if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" {
-			if sniffed := sniffVideoType(targetURL); sniffed != "" {
-				ct = sniffed
+		// One buffered reader wraps the body for both the playlist peek and
+		// the segment stream, so peeked bytes are never lost.
+		body := bufio.NewReaderSize(resp.Body, 64*1024)
+
+		// Playlists are detected by content, not headers: some hosts serve
+		// m3u8 with a generic or even image content type.
+		if resp.StatusCode == 200 {
+			if pl, isPL, err := readIfPlaylist(body); err == nil && isPL {
+				var targetBase *url.URL
+				if parsed, err := url.Parse(targetURL); err == nil {
+					targetBase = parsed
+				}
+				rewritten := rewritePlaylist(string(pl), localURL, targetBase)
+				data := []byte(rewritten)
+
+				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.WriteHeader(resp.StatusCode)
+
+				plCacheMu.Lock()
+				plCache[targetURL] = plEntry{data: data, expiresAt: time.Now().Add(2 * time.Second)}
+				plCacheMu.Unlock()
+
+				w.Write(data)
+				return
 			}
 		}
 
-		// Playlist: read fully, rewrite URLs, cache 2s — must handle
-		// before WriteHeader because rewriting changes Content-Length.
-		if isPlaylist(ct, targetURL) && resp.StatusCode == 200 {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return
+		// Fix wrong/generic Content-Type so mpv knows it's video. The MegaPlay
+		// CDN serves real MPEG-TS segments as image/jpeg, text/html or
+		// application/javascript, so headers alone cannot be trusted.
+		if ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream" ||
+			strings.HasPrefix(ct, "image/") || ct == "text/html" || ct == "application/javascript" {
+			if sniffed := sniffSegmentType(body); sniffed != "" {
+				ct = sniffed
+			} else if sniffed := sniffVideoType(targetURL); sniffed != "" {
+				ct = sniffed
 			}
-			var targetBase *url.URL
-			if parsed, err := url.Parse(targetURL); err == nil {
-				targetBase = parsed
-			}
-			rewritten := rewritePlaylist(string(body), localURL, targetBase)
-			data := []byte(rewritten)
-
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.WriteHeader(resp.StatusCode)
-
-			plCacheMu.Lock()
-			plCache[targetURL] = plEntry{data: data, expiresAt: time.Now().Add(2 * time.Second)}
-			plCacheMu.Unlock()
-
-			w.Write(data)
-			return
 		}
 
 		// Segments: forward headers and stream
@@ -156,7 +172,7 @@ func StartProxy(remoteURL, referrer string) (localURL string, stop func(), err e
 		w.WriteHeader(resp.StatusCode)
 
 		bw := bufio.NewWriterSize(w, 256*1024)
-		io.Copy(bw, resp.Body)
+		io.Copy(bw, body)
 		bw.Flush()
 	})
 
@@ -256,8 +272,7 @@ func rewriteTagURI(tag string, resolve func(string) string) string {
 }
 
 // sniffVideoType returns a video Content-Type based on the URL extension.
-func sniffVideoType(rawURL string) string {
-	u, err := url.Parse(rawURL)
+func sniffVideoType(rawURL string) string {	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "video/mp4"
 	}
@@ -280,6 +295,27 @@ func sniffVideoType(rawURL string) string {
 	default:
 		return "video/mp4"
 	}
+}
+
+// sniffSegmentType detects media content by magic bytes, for segments whose
+// served Content-Type lies (MPEG-TS behind image/jpeg, text/html, ...).
+// It peeks; the caller keeps streaming from the same reader.
+func sniffSegmentType(r *bufio.Reader) string {
+	head, err := r.Peek(8)
+	if err != nil && len(head) < 5 {
+		return ""
+	}
+	switch {
+	case head[0] == 0x47:
+		return "video/mp2t" // MPEG-TS sync byte
+	case len(head) >= 8 && string(head[4:8]) == "ftyp":
+		return "video/mp4"
+	case len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3:
+		return "video/x-matroska"
+	case len(head) >= 4 && string(head[0:4]) == "RIFF":
+		return "video/webm"
+	}
+	return ""
 }
 
 // proxyDialContext resolves hostnames via direct UDP DNS to 8.8.8.8 (bypassing
