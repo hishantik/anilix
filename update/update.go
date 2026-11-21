@@ -188,14 +188,19 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 		return fmt.Errorf("extracted binary not found at %s", extractedPath)
 	}
 
-	// Replace current binary
-	// On some systems (PRoot), os.Rename across filesystems may fail.
-	// Use copy + rename as fallback.
-	if err := os.Rename(extractedPath, exePath); err != nil {
-		// Fallback: copy bytes
-		if err := copyFile(extractedPath, exePath); err != nil {
-			return fmt.Errorf("cannot replace binary: %w", err)
-		}
+	// Replace current binary.
+	//
+	// The installer (install.sh detect_install_dir) installs without sudo
+	// only when the target dir is user-writable, preferring /usr/local/bin
+	// and falling back to ~/.local/bin. An install that went through sudo
+	// leaves a root-owned binary that the updater cannot replace: fail
+	// early with the same remedy the installer would use, before wasting
+	// the download.
+	if err := checkWritable(filepath.Dir(exePath)); err != nil {
+		return err
+	}
+	if err := replaceBinary(extractedPath, exePath); err != nil {
+		return fmt.Errorf("cannot replace binary: %w", err)
 	}
 
 	// Ensure executable permissions
@@ -203,6 +208,73 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 		return fmt.Errorf("cannot set permissions: %w", err)
 	}
 
+	return nil
+}
+
+// checkWritable verifies the install dir accepts a new binary, with an
+// actionable error for the common sudo-installed case.
+func checkWritable(dir string) error {
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("install directory %s is missing", dir)
+	}
+	if !isDirWritable(dir) {
+		return fmt.Errorf(
+			"no write permission to %s (installed with sudo?): re-run install.sh to move anilix to ~/.local/bin, or update with: sudo anilix update",
+			dir)
+	}
+	return nil
+}
+
+// isDirWritable reports whether the current user can create files in dir.
+// os.Stat Mode is not enough: group/other write bits don't reflect ACLs or
+// ownership, so probe with a real file create.
+func isDirWritable(dir string) bool {
+	probe, err := os.CreateTemp(dir, ".anilix-writable-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	probe.Close()
+	os.Remove(name)
+	return true
+}
+
+// replaceBinary atomically swaps src over dst. Rename from /tmp (tmpfs)
+// to the install dir (disk) fails with EXDEV, and writing the bytes of a
+// running binary directly fails with ETXTBSY on Linux — so copy into a
+// temp file beside dst (same filesystem, same dir) and rename over dst.
+// The rename leaves the running process on the old inode untouched.
+func replaceBinary(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	dir := filepath.Dir(dst)
+	tmp, err := os.CreateTemp(dir, ".anilix-new-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.ReadFrom(in); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0755); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
 	return nil
 }
 
@@ -248,23 +320,6 @@ func sha256Of(sumsPath, name string) ([32]byte, error) {
 		}
 	}
 	return [32]byte{}, fmt.Errorf("not listed in checksums.txt")
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = out.ReadFrom(in)
-	return err
 }
 
 func assetNameForPlatform() string {
