@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,67 @@ func TestIsUpdateAvailable(t *testing.T) {
 		if got := IsUpdateAvailable(c.current, c.latest); got != c.want {
 			t.Errorf("IsUpdateAvailable(%q, %q) = %v, want %v", c.current, c.latest, got, c.want)
 		}
+	}
+}
+
+func TestReplaceBinary(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "anilix")
+	if err := os.WriteFile(dst, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "new-anilix")
+	if err := os.WriteFile(src, []byte("new binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceBinary(src, dst); err != nil {
+		t.Fatalf("replaceBinary: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new binary" {
+		t.Errorf("dst holds %q, want %q", got, "new binary")
+	}
+	// The replacement must be executable, and no temp litter left behind.
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Errorf("replaced binary is not executable: %v", info.Mode())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "anilix" && e.Name() != "new-anilix" {
+			t.Errorf("temp litter left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestCheckWritable(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkWritable(dir); err != nil {
+		t.Errorf("checkWritable(tempdir) = %v, want nil", err)
+	}
+
+	// A read-only dir must produce an error naming the directory.
+	ro := t.TempDir()
+	if err := os.Chmod(ro, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(ro, 0o755) }) // so TempDir cleanup can remove it
+	err := checkWritable(ro)
+	if err == nil {
+		t.Fatal("checkWritable(read-only dir) = nil, want error")
+	}
+	if !strings.Contains(err.Error(), ro) {
+		t.Errorf("error %q does not name the unwritable dir", err)
 	}
 }
 
