@@ -143,7 +143,7 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 	}
 
 	// Create temp directory for download
-	tmpDir, err := os.MkdirTemp("", "anilix-update-*")
+	tmpDir, err := tempDir()
 	if err != nil {
 		return fmt.Errorf("cannot create temp dir: %w", err)
 	}
@@ -193,22 +193,70 @@ func PerformUpdate(ctx context.Context, release *ReleaseInfo) error {
 	// The installer (install.sh detect_install_dir) installs without sudo
 	// only when the target dir is user-writable, preferring /usr/local/bin
 	// and falling back to ~/.local/bin. An install that went through sudo
-	// leaves a root-owned binary that the updater cannot replace: fail
-	// early with the same remedy the installer would use, before wasting
-	// the download.
-	if err := checkWritable(filepath.Dir(exePath)); err != nil {
+	// leaves a root-owned binary the updater cannot replace: update it in
+	// place when writable, else install the new binary to ~/.local/bin
+	// (the installer's no-sudo fallback) instead of failing — the user
+	// then has an updated binary on a PATH they control.
+	targetDir, err := installTarget(exePath)
+	if err != nil {
 		return err
 	}
-	if err := replaceBinary(extractedPath, exePath); err != nil {
+	targetPath := filepath.Join(targetDir, filepath.Base(exePath))
+	if err := replaceBinary(extractedPath, targetPath); err != nil {
 		return fmt.Errorf("cannot replace binary: %w", err)
 	}
 
 	// Ensure executable permissions
-	if err := os.Chmod(exePath, 0755); err != nil {
+	if err := os.Chmod(targetPath, 0755); err != nil {
 		return fmt.Errorf("cannot set permissions: %w", err)
 	}
 
 	return nil
+}
+
+// tempDir creates the update scratch dir. os.MkdirTemp("") fails on
+// Termux when TMPDIR is unset (Android has no /tmp): fall back to
+// $PREFIX/tmp.
+func tempDir() (string, error) {
+	dir, err := os.MkdirTemp("", "anilix-update-*")
+	if err == nil {
+		return dir, nil
+	}
+	if !isTermux() {
+		return "", err
+	}
+	base := filepath.Join(os.Getenv("PREFIX"), "tmp")
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(base, "anilix-update-*")
+}
+
+// installTarget picks the directory the updated binary is written to:
+// the executable's own dir when user-writable, else ~/.local/bin for
+// desktop installs (sudo installs /usr/local/bin root-owned). Termux
+// installs always live in the user-owned $PREFIX/bin, so there is no
+// fallback and the original error is returned.
+func installTarget(exePath string) (string, error) {
+	dir := filepath.Dir(exePath)
+	if isDirWritable(dir) {
+		return dir, nil
+	}
+	if isTermux() {
+		return "", checkWritable(dir)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home dir: %w", err)
+	}
+	fallback := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(fallback, 0755); err != nil {
+		return "", err
+	}
+	if !isDirWritable(fallback) {
+		return "", checkWritable(dir)
+	}
+	return fallback, nil
 }
 
 // checkWritable verifies the install dir accepts a new binary, with an
@@ -281,7 +329,7 @@ func replaceBinary(src, dst string) error {
 // verifyChecksum downloads the release's checksums.txt and compares the
 // sha256 of the downloaded archive against it.
 func verifyChecksum(ctx context.Context, tmpDir, tag, assetName, archivePath string) error {
-	sumsURL := baseURL + "/download/" + tag + "/checksums.txt"
+	sumsURL := baseURL + "/" + tag + "/checksums.txt"
 	sumsPath := filepath.Join(tmpDir, "checksums.txt")
 	sumCmd := exec.CommandContext(ctx, "curl", "-fsSL", "-o", sumsPath, sumsURL)
 	if output, err := sumCmd.CombinedOutput(); err != nil {

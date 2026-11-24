@@ -111,3 +111,42 @@ func TestSHA256Of(t *testing.T) {
 		t.Error("sha256Of: expected error for unlisted asset")
 	}
 }
+
+func TestVerifyChecksumURL(t *testing.T) {
+	// Regression: the URL was built with an extra /download/ segment,
+	// producing .../releases/download/download/vX/checksums.txt (404).
+	tag := "v1.2.3"
+	want := baseURL + "/" + tag + "/checksums.txt"
+	if want != "https://github.com/hishantik/anilix/releases/download/v1.2.3/checksums.txt" {
+		t.Errorf("checksums URL %q is malformed", want)
+	}
+}
+
+func TestInstallTarget(t *testing.T) {
+	// Writable exe dir is kept as-is.
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "anilix")
+	got, err := installTarget(exe)
+	if err != nil {
+		t.Fatalf("installTarget(writable dir): %v", err)
+	}
+	if got != dir {
+		t.Errorf("installTarget(writable dir) = %q, want %q", got, dir)
+	}
+
+	// Unwritable exe dir on desktop falls back to ~/.local/bin.
+	ro := t.TempDir()
+	if err := os.Chmod(ro, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(ro, 0o755) })
+	t.Setenv("PREFIX", "") // not Termux
+	got, err = installTarget(filepath.Join(ro, "anilix"))
+	if err != nil {
+		t.Fatalf("installTarget(read-only dir): %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	if want := filepath.Join(home, ".local", "bin"); got != want {
+		t.Errorf("installTarget(read-only dir) = %q, want %q", got, want)
+	}
+}
