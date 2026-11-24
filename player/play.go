@@ -134,6 +134,10 @@ func waitForListen(addr string, timeout time.Duration) error {
 
 func (p *Player) mpvArgs(url string, opts Options) []string {
 	args := []string{}
+	// --no-ytdl: desktop mpv's ytdl hook shells out to yt-dlp on every URL
+	// (seconds of delay when installed); mpv-android has no yt-dlp, which is
+	// why desktop launches feel slower than Android.
+	args = append(args, "--no-ytdl")
 
 	if opts.Title != "" {
 		args = append(args, "--force-media-title="+opts.Title)

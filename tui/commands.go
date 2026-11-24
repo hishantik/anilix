@@ -918,6 +918,26 @@ func (m *SearchModel) playEpisode(anime *source.Anime, episodeNum string) tea.Cm
 	return func() tea.Msg {
 		episodeNumFloat, _ := strconv.ParseFloat(episodeNum, 64)
 
+		// Skip times are independent of stream resolution: fetch them in
+		// parallel so playback isn't held back by the AniSkip round trip.
+		type skipResult struct {
+			times []aniskip.SkipInterval
+		}
+		skipCh := make(chan skipResult, 1)
+		if aniskipEnabled && anime != nil && anime.MALID > 0 {
+			go func() {
+				epNum, _ := strconv.Atoi(episodeNum)
+				times, err := aniskip.GetSkipTimes(anime.MALID, epNum)
+				if err == nil {
+					skipCh <- skipResult{times: times}
+				} else {
+					skipCh <- skipResult{}
+				}
+			}()
+		} else {
+			skipCh <- skipResult{}
+		}
+
 		hianimeProvider.SetTranslation(translationType)
 		streams, err := hianimeProvider.StreamsOf(&source.Episode{Number: episodeNumFloat, Anime: anime})
 		if err != nil {
@@ -928,15 +948,9 @@ func (m *SearchModel) playEpisode(anime *source.Anime, episodeNum string) tea.Cm
 			return TUIErrorMsg{Err: fmt.Errorf("no streams found")}
 		}
 
-		var skipTimes []aniskip.SkipInterval
-		if aniskipEnabled && anime != nil && anime.MALID > 0 {
-			epNum, _ := strconv.Atoi(episodeNum)
-			if times, err := aniskip.GetSkipTimes(anime.MALID, epNum); err == nil {
-				skipTimes = times
-			}
-		}
+		skipRes := <-skipCh
 
-		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipTimes, quality)
+		playStream := tryPlayStream(streams, animeTitle, episodeNum, skipRes.times, quality)
 		if playStream == nil {
 			return TUIErrorMsg{Err: fmt.Errorf("no playable stream found")}
 		}

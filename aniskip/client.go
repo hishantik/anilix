@@ -39,7 +39,7 @@ func GetSkipTimes(malID int, episodeNum int) ([]SkipInterval, error) {
 		return nil, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	url := fmt.Sprintf(
