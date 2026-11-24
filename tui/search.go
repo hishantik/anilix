@@ -632,7 +632,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.confirmSelect--
 				}
 			case "right", "l", "down", "j":
-				if m.confirmSelect < 2 {
+				if m.confirmSelect < 3 {
 					m.confirmSelect++
 				}
 			case "enter":

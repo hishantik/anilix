@@ -903,11 +903,11 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 	}
 }
 
-// confirmPostPlay acts on the post-playback dialog choice: next episode,
-// replay, or quality. Next/Replay relaunch the player with the same code
-// path as the details screen.
+// confirmPostPlay acts on the post-playback dialog choice: next or
+// previous episode, replay, or quality. Next/Previous/Replay relaunch the
+// player with the same code path as the details screen.
 func (m *SearchModel) confirmPostPlay(action int) tea.Cmd {
-	if action == 2 {
+	if action == 3 {
 		m.settingsState.Quality = cycleValue(m.settingsState.Quality,
 			[]string{"best", "1080p", "720p", "480p", "360p", "auto"}, 1)
 		config.Set("quality", m.settingsState.Quality)
@@ -921,6 +921,10 @@ func (m *SearchModel) confirmPostPlay(action int) tea.Cmd {
 	selectedAnime := m.searchState.Results[m.searchState.Selected]
 	if action == 0 && m.episodeState.Selected+1 < len(m.episodeState.Episodes) {
 		m.episodeState.Selected++
+	}
+	// Previous stops at the first episode: there is nothing before it.
+	if action == 1 && m.episodeState.Selected > 0 {
+		m.episodeState.Selected--
 	}
 	selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
 	recordWatch(selectedAnime.Name, selectedAnime.ShowID, selectedEpisode)

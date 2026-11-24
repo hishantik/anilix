@@ -701,7 +701,7 @@ func (m *SearchModel) viewConfirmQuit() string {
 // Like confirmSwitch, the labels keep their fixed order and only the
 // highlight moves.
 func postPlaySwitch(choice int) PillSwitch {
-	options := []string{"Next", "Replay", "Quality"}
+	options := []string{"Next", "Previous", "Replay", "Quality"}
 	if choice < 0 || choice >= len(options) {
 		choice = 0
 	}
