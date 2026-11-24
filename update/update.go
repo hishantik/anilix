@@ -235,15 +235,18 @@ func tempDir() (string, error) {
 // installTarget picks the directory the updated binary is written to:
 // the executable's own dir when user-writable, else ~/.local/bin for
 // desktop installs (sudo installs /usr/local/bin root-owned). Termux
-// installs always live in the user-owned $PREFIX/bin, so there is no
-// fallback and the original error is returned.
+// always targets $PREFIX/bin (/data/data/com.termux/files/usr/bin) so
+// the update lands on PATH regardless of where it was launched from.
 func installTarget(exePath string) (string, error) {
 	dir := filepath.Dir(exePath)
+	if isTermux() {
+		if prefix := os.Getenv("PREFIX"); prefix != "" {
+			return filepath.Join(prefix, "bin"), nil
+		}
+		return "", checkWritable(dir)
+	}
 	if isDirWritable(dir) {
 		return dir, nil
-	}
-	if isTermux() {
-		return "", checkWritable(dir)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -123,6 +123,9 @@ func TestVerifyChecksumURL(t *testing.T) {
 }
 
 func TestInstallTarget(t *testing.T) {
+	// Not Termux by default so the desktop cases run everywhere.
+	t.Setenv("PREFIX", "")
+
 	// Writable exe dir is kept as-is.
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "anilix")
@@ -140,7 +143,6 @@ func TestInstallTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(ro, 0o755) })
-	t.Setenv("PREFIX", "") // not Termux
 	got, err = installTarget(filepath.Join(ro, "anilix"))
 	if err != nil {
 		t.Fatalf("installTarget(read-only dir): %v", err)
@@ -148,5 +150,15 @@ func TestInstallTarget(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	if want := filepath.Join(home, ".local", "bin"); got != want {
 		t.Errorf("installTarget(read-only dir) = %q, want %q", got, want)
+	}
+
+	// Termux always targets $PREFIX/bin.
+	t.Setenv("PREFIX", "/data/data/com.termux/files/usr")
+	got, err = installTarget(exe)
+	if err != nil {
+		t.Fatalf("installTarget(termux): %v", err)
+	}
+	if want := "/data/data/com.termux/files/usr/bin"; got != want {
+		t.Errorf("installTarget(termux) = %q, want %q", got, want)
 	}
 }
