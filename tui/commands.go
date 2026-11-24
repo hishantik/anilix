@@ -12,6 +12,7 @@ import (
 
 	"github.com/hishantik/anilix/aniskip"
 	"github.com/hishantik/anilix/auth"
+	"github.com/hishantik/anilix/config"
 	"github.com/hishantik/anilix/player"
 	"github.com/hishantik/anilix/provider/anilist"
 	"github.com/hishantik/anilix/provider/jikan"
@@ -900,6 +901,33 @@ func buildEpisodeMetadataPanel(ep *jikan.Episode) *EpisodeMetadataPanel {
 		Synopsis:      ep.Synopsis,
 		Duration:      ep.Duration,
 	}
+}
+
+// confirmPostPlay acts on the post-playback dialog choice: next episode,
+// replay, or quality. Next/Replay relaunch the player with the same code
+// path as the details screen.
+func (m *SearchModel) confirmPostPlay(action int) tea.Cmd {
+	if action == 2 {
+		m.settingsState.Quality = cycleValue(m.settingsState.Quality,
+			[]string{"best", "1080p", "720p", "480p", "360p", "auto"}, 1)
+		config.Set("quality", m.settingsState.Quality)
+		return nil
+	}
+
+	if m.searchState.Selected >= len(m.searchState.Results) || len(m.episodeState.Episodes) == 0 {
+		m.state = detailState
+		return nil
+	}
+	selectedAnime := m.searchState.Results[m.searchState.Selected]
+	if action == 0 && m.episodeState.Selected+1 < len(m.episodeState.Episodes) {
+		m.episodeState.Selected++
+	}
+	selectedEpisode := m.episodeState.Episodes[m.episodeState.Selected]
+	recordWatch(selectedAnime.Name, selectedAnime.ShowID, selectedEpisode)
+	m.episodeState.Playing = true
+	m.progressPercent = 0
+	m.progressTarget = 0.5
+	return tea.Batch(m.playEpisode(selectedAnime, selectedEpisode), m.loading.Tick)
 }
 
 func (m *SearchModel) playEpisode(anime *source.Anime, episodeNum string) tea.Cmd {

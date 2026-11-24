@@ -40,6 +40,8 @@ func (m *SearchModel) View() tea.View {
 		content = m.viewWatchlistState()
 	case confirmQuitState:
 		content = m.viewConfirmQuit()
+	case postPlayState:
+		content = m.viewPostPlay()
 	case settingsState:
 		content = m.viewSettings()
 	case anilistLoginState:
@@ -687,6 +689,35 @@ func (m *SearchModel) viewConfirmQuit() string {
 		Body:  "Are you sure you want to quit?",
 		Actions: []string{
 			confirmSwitch(m.confirmSelect).Render(),
+		},
+		Width:     ui.OverlayWidth(44, m.contentWidth),
+		Elevation: theme.Elevation3,
+	}.Render()
+
+	return lipgloss.Place(m.contentWidth, m.contentHeight, lipgloss.Center, lipgloss.Center, dialog)
+}
+
+// postPlaySwitch renders the three actions of the post-playback dialog.
+// Like confirmSwitch, the labels keep their fixed order and only the
+// highlight moves.
+func postPlaySwitch(choice int) PillSwitch {
+	options := []string{"Next", "Replay", "Quality"}
+	if choice < 0 || choice >= len(options) {
+		choice = 0
+	}
+	return PillSwitch{Options: options, Current: options[choice]}
+}
+
+func (m *SearchModel) viewPostPlay() string {
+	anime := ""
+	if m.searchState.Selected < len(m.searchState.Results) {
+		anime = m.searchState.Results[m.searchState.Selected].Name
+	}
+	dialog := ui.Dialog{
+		Title: "Finished playing",
+		Body:  anime,
+		Actions: []string{
+			postPlaySwitch(m.confirmSelect).Render(),
 		},
 		Width:     ui.OverlayWidth(44, m.contentWidth),
 		Elevation: theme.Elevation3,

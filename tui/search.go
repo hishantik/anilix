@@ -621,6 +621,29 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.state == postPlayState {
+			if key.Matches(msg, m.keymap.Toggle) {
+				m.toggleTranslation()
+				return m, nil
+			}
+			switch msg.String() {
+			case "left", "h", "up", "k":
+				if m.confirmSelect > 0 {
+					m.confirmSelect--
+				}
+			case "right", "l", "down", "j":
+				if m.confirmSelect < 2 {
+					m.confirmSelect++
+				}
+			case "enter":
+				return m, m.confirmPostPlay(m.confirmSelect)
+			case "esc", "n":
+				m.state = detailState
+				return m, nil
+			}
+			return m, nil
+		}
+
 		if m.state == confirmQuitState {
 			if key.Matches(msg, m.keymap.Toggle) {
 				m.toggleTranslation()
@@ -1150,6 +1173,10 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		// Offer next/replay/quality like ani-cli once the player exits.
+		m.prevState = detailState
+		m.confirmSelect = 0
+		m.state = postPlayState
 
 	case TrackingStatusLoadedMsg:
 		m.episodeState.TrackingStatus = msg.Status

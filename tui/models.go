@@ -31,6 +31,8 @@ const (
 	confirmLogoutState
 	// discoverState shows trending and popular anime for discovery
 	discoverState
+	// postPlayState offers next/replay/quality after the player exits.
+	postPlayState
 )
 
 // SelectionResult holds the selected anime and episode
@@ -124,13 +126,13 @@ type WatchlistState struct {
 // DiscoverState holds the state for the discover screen: trending and
 // popular anime from AniList.
 type DiscoverState struct {
-	Loading   bool
-	Err       error
-	Trending  []*source.Anime
-	Popular   []*source.Anime
-	Selected  int
-	Scroll    int
-	Section   string // "trending" or "popular"
+	Loading  bool
+	Err      error
+	Trending []*source.Anime
+	Popular  []*source.Anime
+	Selected int
+	Scroll   int
+	Section  string // "trending" or "popular"
 }
 
 // NewSearchState creates a new search state
