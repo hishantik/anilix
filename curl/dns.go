@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,35 @@ import (
 // filtered (Termux points at [::1]:53; some devices run DNS-level content
 // filters that blocklist streaming CDNs).
 var dnsServers = []string{"8.8.8.8:53", "1.1.1.1:53"}
+
+// dnsCache caches host→IP answers so a playback chain (embed page, playlist,
+// segments) doesn't repeat a raw UDP round trip per request. TTL 5 min keeps
+// answers fresh enough for a session; CDN IPs rarely rotate faster.
+type dnsCacheEntry struct {
+	ip     net.IP
+	expiry time.Time
+}
+
+var dnsCache sync.Map // host → dnsCacheEntry
+
+const dnsCacheTTL = 5 * time.Minute
+
+// cachedLookup returns the cached IP for host, or resolves and caches it.
+func cachedLookup(ctx context.Context, host string) (net.IP, error) {
+	if v, ok := dnsCache.Load(host); ok {
+		e := v.(dnsCacheEntry)
+		if time.Now().Before(e.expiry) {
+			return e.ip, nil
+		}
+		dnsCache.Delete(host)
+	}
+	ip, err := dnsLookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	dnsCache.Store(host, dnsCacheEntry{ip: ip, expiry: time.Now().Add(dnsCacheTTL)})
+	return ip, nil
+}
 
 // GetResolved fetches a URL while bypassing the system DNS resolver: the host
 // is resolved via raw UDP DNS to public resolvers and pinned with curl's
@@ -24,7 +54,7 @@ func GetResolved(ctx context.Context, rawURL string, headers map[string]string) 
 		return Get(ctx, rawURL, headers)
 	}
 
-	ip, err := dnsLookup(ctx, host)
+	ip, err := cachedLookup(ctx, host)
 	if err != nil {
 		// System resolver may work fine on desktops - don't fail the request.
 		return Get(ctx, rawURL, headers)
